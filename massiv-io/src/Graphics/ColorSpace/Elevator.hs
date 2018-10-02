@@ -1,6 +1,10 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE CPP                 #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns            #-}
+{-# LANGUAGE CPP                     #-}
+{-# LANGUAGE DefaultSignatures       #-}
+{-# LANGUAGE FlexibleContexts        #-}
+{-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE ScopedTypeVariables     #-}
+{-# LANGUAGE TypeFamilies            #-}
 #if __GLASGOW_HASKELL__ >= 800
   {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 #endif
@@ -17,7 +21,7 @@ module Graphics.ColorSpace.Elevator (
   , clamp01
   ) where
 
-import qualified Data.Complex         as C
+import           Data.Complex         as C
 import           Data.Int
 import           Data.Typeable
 import           Data.Vector.Storable (Storable)
@@ -35,7 +39,18 @@ import           GHC.Float
 -- >>> eToWord16 <$> rgb
 -- <RGB:(0|32768|65535)>
 --
-class (Eq e, Num e, Typeable e, Unbox e, Storable e) => Elevator e where
+class (Eq e, Num e, Num (LevelUp e), Typeable e, Unbox e, Storable e) => Elevator e where
+  type LevelUp e :: *
+
+  eUp :: e -> LevelUp e
+  default eUp :: Integral e => e -> LevelUp e
+  eUp = fromIntegral
+  {-# INLINE eUp #-}
+
+  eDown :: LevelUp e -> e
+  default eDown :: Integral (LevelUp e) => LevelUp e -> e
+  eDown = fromIntegral
+  {-# INLINE eDown #-}
 
   -- | Values are scaled to @[0, 255]@ range.
   eToWord8 :: e -> Word8
@@ -57,6 +72,18 @@ class (Eq e, Num e, Typeable e, Unbox e, Storable e) => Elevator e where
 
   -- | Values are scaled from @[0.0, 1.0]@ range.
   eFromDouble :: Double -> e
+
+  -- | Values are scaled to @[0.0, 1.0]@ range.
+  eCoerceToDouble :: e -> Double
+  default eCoerceToDouble :: Integral e => e -> Double
+  eCoerceToDouble = fromIntegral
+  {-# INLINE eCoerceToDouble #-}
+
+  -- | Values are scaled from @[0.0, 1.0]@ range.
+  eRoundFromDouble :: Double -> e
+  default eRoundFromDouble :: Integral e => Double -> e
+  eRoundFromDouble = round
+  {-# INLINE eRoundFromDouble #-}
 
 
 -- | Lower the precision
@@ -89,6 +116,7 @@ clamp01 !x = min (max 0 x) 1
 
 -- | Values between @[0, 255]]@
 instance Elevator Word8 where
+  type LevelUp Word8 = Int16
   eToWord8 = id
   {-# INLINE eToWord8 #-}
   eToWord16 = raiseUp
@@ -107,6 +135,7 @@ instance Elevator Word8 where
 
 -- | Values between @[0, 65535]]@
 instance Elevator Word16 where
+  type LevelUp Word16 = Int32
   eToWord8 = dropDown
   {-# INLINE eToWord8 #-}
   eToWord16 = id
@@ -125,6 +154,7 @@ instance Elevator Word16 where
 
 -- | Values between @[0, 4294967295]@
 instance Elevator Word32 where
+  type LevelUp Word32 = Int64
   eToWord8 = dropDown
   {-# INLINE eToWord8 #-}
   eToWord16 = dropDown
@@ -143,6 +173,9 @@ instance Elevator Word32 where
 
 -- | Values between @[0, 18446744073709551615]@
 instance Elevator Word64 where
+  type LevelUp Word64 = Double
+  eDown = round
+  {-# INLINE eDown #-}
   eToWord8 = dropDown
   {-# INLINE eToWord8 #-}
   eToWord16 = dropDown
@@ -160,6 +193,9 @@ instance Elevator Word64 where
 
 -- | Values between @[0, 18446744073709551615]@ on 64bit
 instance Elevator Word where
+  type LevelUp Word = Double
+  eDown = round
+  {-# INLINE eDown #-}
   eToWord8 = dropDown
   {-# INLINE eToWord8 #-}
   eToWord16 = dropDown
@@ -177,6 +213,7 @@ instance Elevator Word where
 
 -- | Values between @[0, 127]@
 instance Elevator Int8 where
+  type LevelUp Int8 = Int16
   eToWord8 = fromIntegral . max 0
   {-# INLINE eToWord8 #-}
   eToWord16 = raiseUp . max 0
@@ -195,6 +232,7 @@ instance Elevator Int8 where
 
 -- | Values between @[0, 32767]@
 instance Elevator Int16 where
+  type LevelUp Int16 = Int32
   eToWord8 = dropDown . max 0
   {-# INLINE eToWord8 #-}
   eToWord16 = fromIntegral . max 0
@@ -213,6 +251,7 @@ instance Elevator Int16 where
 
 -- | Values between @[0, 2147483647]@
 instance Elevator Int32 where
+  type LevelUp Int32 = Int64
   eToWord8 = dropDown . max 0
   {-# INLINE eToWord8 #-}
   eToWord16 = dropDown . max 0
@@ -231,6 +270,9 @@ instance Elevator Int32 where
 
 -- | Values between @[0, 9223372036854775807]@
 instance Elevator Int64 where
+  type LevelUp Int64 = Double
+  eDown = round
+  {-# INLINE eDown #-}
   eToWord8 = dropDown . max 0
   {-# INLINE eToWord8 #-}
   eToWord16 = dropDown . max 0
@@ -249,6 +291,9 @@ instance Elevator Int64 where
 
 -- | Values between @[0, 9223372036854775807]@ on 64bit
 instance Elevator Int where
+  type LevelUp Int = Double
+  eDown = round
+  {-# INLINE eDown #-}
   eToWord8 = dropDown . max 0
   {-# INLINE eToWord8 #-}
   eToWord16 = dropDown . max 0
@@ -267,6 +312,11 @@ instance Elevator Int where
 
 -- | Values between @[0.0, 1.0]@
 instance Elevator Float where
+  type LevelUp Float = Float
+  eUp = id
+  {-# INLINE eUp #-}
+  eDown = id
+  {-# INLINE eDown #-}
   eToWord8 = stretch . clamp01
   {-# INLINE eToWord8 #-}
   eToWord16 = stretch . clamp01
@@ -281,10 +331,19 @@ instance Elevator Float where
   {-# INLINE eToDouble #-}
   eFromDouble = eToFloat
   {-# INLINE eFromDouble #-}
+  eCoerceToDouble = float2Double
+  {-# INLINE eCoerceToDouble #-}
+  eRoundFromDouble = eToFloat
+  {-# INLINE eRoundFromDouble #-}
 
 
 -- | Values between @[0.0, 1.0]@
 instance Elevator Double where
+  type LevelUp Double = Double
+  eUp = id
+  {-# INLINE eUp #-}
+  eDown = id
+  {-# INLINE eDown #-}
   eToWord8 = stretch . clamp01
   {-# INLINE eToWord8 #-}
   eToWord16 = stretch . clamp01
@@ -299,10 +358,18 @@ instance Elevator Double where
   {-# INLINE eToDouble #-}
   eFromDouble = id
   {-# INLINE eFromDouble #-}
+  eCoerceToDouble = id
+  {-# INLINE eCoerceToDouble #-}
+  eRoundFromDouble = id
+  {-# INLINE eRoundFromDouble #-}
 
 
--- | Discards imaginary part and changes precision of real part.
-instance (Num e, Elevator e, RealFloat e) => Elevator (C.Complex e) where
+instance Elevator (C.Complex Float) where
+  type LevelUp (C.Complex Float) = C.Complex Float
+  eUp (r :+ i) = eUp r :+ eUp i
+  {-# INLINE eUp #-}
+  eDown (r :+ i) = eDown r :+ eDown i
+  {-# INLINE eDown #-}
   eToWord8 = eToWord8 . C.realPart
   {-# INLINE eToWord8 #-}
   eToWord16 = eToWord16 . C.realPart
@@ -317,3 +384,55 @@ instance (Num e, Elevator e, RealFloat e) => Elevator (C.Complex e) where
   {-# INLINE eToDouble #-}
   eFromDouble = (C.:+ 0) . eFromDouble
   {-# INLINE eFromDouble #-}
+  eCoerceToDouble = eToDouble
+  {-# INLINE eCoerceToDouble #-}
+  eRoundFromDouble = eFromDouble
+  {-# INLINE eRoundFromDouble #-}
+
+instance Elevator (C.Complex Double) where
+  type LevelUp (C.Complex Double) = C.Complex Double
+  eUp (r :+ i) = eUp r :+ eUp i
+  {-# INLINE eUp #-}
+  eDown (r :+ i) = eDown r :+ eDown i
+  {-# INLINE eDown #-}
+  eToWord8 = eToWord8 . C.realPart
+  {-# INLINE eToWord8 #-}
+  eToWord16 = eToWord16 . C.realPart
+  {-# INLINE eToWord16 #-}
+  eToWord32 = eToWord32 . C.realPart
+  {-# INLINE eToWord32 #-}
+  eToWord64 = eToWord64 . C.realPart
+  {-# INLINE eToWord64 #-}
+  eToFloat = eToFloat . C.realPart
+  {-# INLINE eToFloat #-}
+  eToDouble = eToDouble . C.realPart
+  {-# INLINE eToDouble #-}
+  eFromDouble = (C.:+ 0) . eFromDouble
+  {-# INLINE eFromDouble #-}
+  eCoerceToDouble = eToDouble
+  {-# INLINE eCoerceToDouble #-}
+  eRoundFromDouble = eFromDouble
+  {-# INLINE eRoundFromDouble #-}
+
+
+-- -- | Discards imaginary part and changes precision of real part.
+-- instance (Num e, Elevator e, RealFloat e) => Elevator (C.Complex e) where
+--   type LevelUp (C.Complex e) = C.Complex (LevelUp e)
+--   eUp (r :+ i) = eUp r :+ eUp i
+--   {-# INLINE eUp #-}
+--   eDown (r :+ i) = eDown r :+ eDown i
+--   {-# INLINE eDown #-}
+--   eToWord8 = eToWord8 . C.realPart
+--   {-# INLINE eToWord8 #-}
+--   eToWord16 = eToWord16 . C.realPart
+--   {-# INLINE eToWord16 #-}
+--   eToWord32 = eToWord32 . C.realPart
+--   {-# INLINE eToWord32 #-}
+--   eToWord64 = eToWord64 . C.realPart
+--   {-# INLINE eToWord64 #-}
+--   eToFloat = eToFloat . C.realPart
+--   {-# INLINE eToFloat #-}
+--   eToDouble = eToDouble . C.realPart
+--   {-# INLINE eToDouble #-}
+--   eFromDouble = (C.:+ 0) . eFromDouble
+--   {-# INLINE eFromDouble #-}

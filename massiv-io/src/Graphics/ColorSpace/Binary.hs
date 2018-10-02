@@ -184,6 +184,11 @@ isOff = not . isOn
 
 -- | Values: @0@ and @1@
 instance Elevator Bit where
+  type LevelUp Bit = Bit
+  eUp = id
+  {-# INLINE eUp #-}
+  eDown = id
+  {-# INLINE eDown #-}
   eToWord8 (Bit 0) = 0
   eToWord8 _       = maxBound
   {-# INLINE eToWord8 #-}
@@ -205,6 +210,10 @@ instance Elevator Bit where
   eFromDouble 0 = Bit 0
   eFromDouble _ = Bit 1
   {-# INLINE eFromDouble #-}
+  eCoerceToDouble = eToDouble
+  {-# INLINE eCoerceToDouble #-}
+  eRoundFromDouble = eFromDouble
+  {-# INLINE eRoundFromDouble #-}
 
 
 instance Num Bit where
