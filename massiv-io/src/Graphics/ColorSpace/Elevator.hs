@@ -117,6 +117,10 @@ clamp01 !x = min (max 0 x) 1
 -- | Values between @[0, 255]]@
 instance Elevator Word8 where
   type LevelUp Word8 = Int16
+  eUp = fromIntegral
+  {-# INLINE eUp #-}
+  eDown = fromIntegral
+  {-# INLINE eDown #-}
   eToWord8 = id
   {-# INLINE eToWord8 #-}
   eToWord16 = raiseUp
