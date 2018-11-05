@@ -19,6 +19,7 @@ module Graphics.ColorSpace.Binary (
   ) where
 
 import           Control.Applicative
+import           Control.Exception
 import           Control.Monad
 import           Data.Bits
 import           Data.Typeable                (Typeable)
@@ -185,6 +186,13 @@ isOff = not . isOn
 -- | Values: @0@ and @1@
 instance Elevator Bit where
   type LevelUp Bit = Bit
+  (//) _ (Bit 0) = throw DivideByZero
+  (//) x _       = x
+  {-# INLINE (//) #-}
+  eMinValue = Bit 0
+  {-# INLINE eMinValue #-}
+  eMaxValue = Bit 1
+  {-# INLINE eMaxValue #-}
   eUp = id
   {-# INLINE eUp #-}
   eDown = id

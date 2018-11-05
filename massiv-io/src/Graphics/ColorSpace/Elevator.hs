@@ -29,6 +29,7 @@ import           Data.Vector.Unboxed  (Unbox)
 import           Data.Word
 import           GHC.Float
 
+infixl 7 //
 
 -- | A class with a set of convenient functions that allow for changing precision of
 -- channels within pixels, while scaling the values to keep them in an appropriate range.
@@ -41,6 +42,20 @@ import           GHC.Float
 --
 class (Eq e, Num e, Num (LevelUp e), Typeable e, Unbox e, Storable e) => Elevator e where
   type LevelUp e :: *
+
+  (//) :: e -> e -> e
+  default (//) :: Integral e => e -> e -> e
+  (//) = div
+  {-# INLINE (//) #-}
+
+  eMaxValue :: e
+  default eMaxValue :: Bounded e => e
+  eMaxValue = maxBound
+  {-# INLINE eMaxValue #-}
+
+  eMinValue :: e
+  eMinValue = 0
+  {-# INLINE eMinValue #-}
 
   eUp :: e -> LevelUp e
   default eUp :: Integral e => e -> LevelUp e
@@ -317,6 +332,12 @@ instance Elevator Int where
 -- | Values between @[0.0, 1.0]@
 instance Elevator Float where
   type LevelUp Float = Float
+  (//) = (/)
+  {-# INLINE (//) #-}
+  eMinValue = 0
+  {-# INLINE eMinValue #-}
+  eMaxValue = 1
+  {-# INLINE eMaxValue #-}
   eUp = id
   {-# INLINE eUp #-}
   eDown = id
@@ -344,6 +365,12 @@ instance Elevator Float where
 -- | Values between @[0.0, 1.0]@
 instance Elevator Double where
   type LevelUp Double = Double
+  (//) = (/)
+  {-# INLINE (//) #-}
+  eMinValue = 0
+  {-# INLINE eMinValue #-}
+  eMaxValue = 1
+  {-# INLINE eMaxValue #-}
   eUp = id
   {-# INLINE eUp #-}
   eDown = id
@@ -370,6 +397,12 @@ instance Elevator Double where
 
 instance Elevator (C.Complex Float) where
   type LevelUp (C.Complex Float) = C.Complex Float
+  (//) = (/)
+  {-# INLINE (//) #-}
+  eMinValue = 0 :+ 0
+  {-# INLINE eMinValue #-}
+  eMaxValue = 1 :+ 1
+  {-# INLINE eMaxValue #-}
   eUp (r :+ i) = eUp r :+ eUp i
   {-# INLINE eUp #-}
   eDown (r :+ i) = eDown r :+ eDown i
@@ -395,6 +428,12 @@ instance Elevator (C.Complex Float) where
 
 instance Elevator (C.Complex Double) where
   type LevelUp (C.Complex Double) = C.Complex Double
+  (//) = (/)
+  {-# INLINE (//) #-}
+  eMinValue = 0 :+ 0
+  {-# INLINE eMinValue #-}
+  eMaxValue = 1 :+ 1
+  {-# INLINE eMaxValue #-}
   eUp (r :+ i) = eUp r :+ eUp i
   {-# INLINE eUp #-}
   eDown (r :+ i) = eDown r :+ eDown i
@@ -418,25 +457,3 @@ instance Elevator (C.Complex Double) where
   eRoundFromDouble = eFromDouble
   {-# INLINE eRoundFromDouble #-}
 
-
--- -- | Discards imaginary part and changes precision of real part.
--- instance (Num e, Elevator e, RealFloat e) => Elevator (C.Complex e) where
---   type LevelUp (C.Complex e) = C.Complex (LevelUp e)
---   eUp (r :+ i) = eUp r :+ eUp i
---   {-# INLINE eUp #-}
---   eDown (r :+ i) = eDown r :+ eDown i
---   {-# INLINE eDown #-}
---   eToWord8 = eToWord8 . C.realPart
---   {-# INLINE eToWord8 #-}
---   eToWord16 = eToWord16 . C.realPart
---   {-# INLINE eToWord16 #-}
---   eToWord32 = eToWord32 . C.realPart
---   {-# INLINE eToWord32 #-}
---   eToWord64 = eToWord64 . C.realPart
---   {-# INLINE eToWord64 #-}
---   eToFloat = eToFloat . C.realPart
---   {-# INLINE eToFloat #-}
---   eToDouble = eToDouble . C.realPart
---   {-# INLINE eToDouble #-}
---   eFromDouble = (C.:+ 0) . eFromDouble
---   {-# INLINE eFromDouble #-}
