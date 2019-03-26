@@ -39,6 +39,7 @@ library
                      , data-default-class
                      , deepseq
                      , directory
+                     , exceptions
                      , filepath        >= 1.0
                      , massiv          >= 0.1.1
                      , process

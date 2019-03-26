@@ -43,6 +43,7 @@ module Data.Massiv.Array.IO
 import Control.Concurrent (forkIO)
 import Control.Exception (bracket)
 import Control.Monad (void)
+import Control.Monad.IO.Unlift
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import Data.Massiv.Array as A
@@ -73,21 +74,22 @@ data ExternalViewer =
 
 
 -- | Read an array from one of the supported file formats.
-readArray :: Readable f arr =>
+readArray :: (Readable f arr, MonadIO m) =>
              f -- ^ File format that should be used while decoding the file
           -> ReadOptions f -- ^ Any file format related decoding options. Use `def` for default.
           -> FilePath -- ^ Path to the file
-          -> IO arr
-readArray format opts path = decode format opts <$> B.readFile path
+          -> m arr
+readArray format opts path = decode format opts <$> liftIO (B.readFile path)
 {-# INLINE readArray #-}
 
 
-writeArray :: Writable f arr =>
+writeArray :: (Writable f arr, MonadIO m) =>
               f -- ^ Format to use while encoding the array
            -> WriteOptions f -- ^ Any file format related encoding options. Use `def` for default.
            -> FilePath
-           -> arr -> IO ()
-writeArray format opts path arr = BL.writeFile path (encode format opts arr)
+           -> arr
+           -> m ()
+writeArray format opts path = liftIO . BL.writeFile path . encode format opts
 {-# INLINE writeArray #-}
 
 
@@ -126,10 +128,10 @@ readImage path = decodeImage imageReadFormats path <$> B.readFile path
 -- | Same as `readImage`, but will perform any possible color space and
 -- precision conversions in order to match the result image type. Very useful
 -- whenever image format isn't known at compile time.
-readImageAuto :: (Mutable r Ix2 (Pixel cs e), ColorSpace cs e) =>
+readImageAuto :: (Mutable r Ix2 (Pixel cs e), ColorSpace cs e, MonadIO m) =>
                   FilePath -- ^ File path for an image
-               -> IO (Image r cs e)
-readImageAuto path = decodeImage imageReadAutoFormats path <$> B.readFile path
+               -> m (Image r cs e)
+readImageAuto path = decodeImage imageReadAutoFormats path <$> liftIO (B.readFile path)
 {-# INLINE readImageAuto #-}
 
 
@@ -143,9 +145,9 @@ readImageAuto path = decodeImage imageReadAutoFormats path <$> B.readFile path
 --
 -- Can throw `ConvertError`, `EncodeError` and other usual IO errors.
 --
-writeImage :: (Source r Ix2 (Pixel cs e), ColorSpace cs e) =>
-               FilePath -> Image r cs e -> IO ()
-writeImage path = BL.writeFile path . encodeImage imageWriteFormats path
+writeImage :: (Source r Ix2 (Pixel cs e), ColorSpace cs e, MonadIO m) =>
+               FilePath -> Image r cs e -> m ()
+writeImage path = liftIO . BL.writeFile path . encodeImage imageWriteFormats path
 
 
 -- | Write an image to file while performing all necessary precisiona and color space conversions.
@@ -156,21 +158,23 @@ writeImageAuto
      , ToRGBA cs e
      , ToYCbCr cs e
      , ToCMYK cs e
+     , MonadIO m
      )
-  => FilePath -> Image r cs e -> IO ()
-writeImageAuto path = BL.writeFile path . encodeImage imageWriteAutoFormats path
+  => FilePath -> Image r cs e -> m ()
+writeImageAuto path = liftIO . BL.writeFile path . encodeImage imageWriteAutoFormats path
 
 
 
 -- | An image is written as a @.tiff@ file into an operating system's temporary
 -- directory and passed as an argument to the external viewer program.
 displayImageUsing ::
-     Writable (Auto TIF) (Image r cs e)
+     (Writable (Auto TIF) (Image r cs e), MonadIO m)
   => ExternalViewer -- ^ Image viewer program
-  -> Bool -- ^ Should the function block the current thread until viewer is closed.
-  -> Image r cs e
-  -> IO ()
+  -> Bool -- ^ Should this function block the current thread until viewer is closed.
+  -> Image r cs e -- ^ Image to display
+  -> m ()
 displayImageUsing viewer block img =
+  liftIO $
   if block
     then display
     else img `seq` void (forkIO display)
@@ -189,16 +193,16 @@ displayImageUsing viewer block img =
 
 
 -- | Displays an image file by calling an external image viewer.
-displayImageFile :: ExternalViewer -> FilePath -> IO ()
+displayImageFile :: MonadIO m => ExternalViewer -> FilePath -> m ()
 displayImageFile (ExternalViewer exe args ix) imgPath =
-  void $ readProcess exe (argsBefore ++ [imgPath] ++ argsAfter) ""
+  void $ liftIO $ readProcess exe (argsBefore ++ [imgPath] ++ argsAfter) ""
   where (argsBefore, argsAfter) = P.splitAt ix args
 
 
 -- | Makes a call to an external viewer that is set as a default image viewer by
 -- the OS. This is a non-blocking function call, so it might take some time
 -- before an image will appear.
-displayImage :: Writable (Auto TIF) (Image r cs e) => Image r cs e -> IO ()
+displayImage :: (Writable (Auto TIF) (Image r cs e), MonadIO m) => Image r cs e -> m ()
 displayImage = displayImageUsing defaultViewer False
 
 -- | Default viewer is inferred from the operating system.
