@@ -1,7 +1,11 @@
+# 0.2.8.1
+
+* Fix `sqrtA` function. Backport of [#76](https://github.com/lehins/massiv/pull/76)
+
 # 0.2.8
 
 * Fixed a problem where convolution stencil size was not inverted, causing out of bounds memory
-  read: #72
+  read: [#72](https://github.com/lehins/massiv/issues/72)
 * Fixed an issue with windowed array where a stencil size is smaller than the array it is applied to
 * Fixed incorrect cross-correlation stencil construction
 
