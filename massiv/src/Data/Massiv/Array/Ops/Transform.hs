@@ -33,6 +33,7 @@ module Data.Massiv.Array.Ops.Transform
   , extractFromToM
   , extractFromTo
   , extractFromTo'
+  , popExtractM
   -- ** Append/Split
   , cons
   , unconsM
@@ -445,6 +446,69 @@ unsnocM arr
     !sz = size arr
     !k = unSz sz - 1
 {-# INLINE unsnocM #-}
+
+-- -- | 
+-- --
+-- -- @since 0.3.5
+-- appendDL :: (MonadThrow m, Load r1 ix e, Load r2 ix e) =>
+--           Dim -> Array r1 ix e -> Array r2 ix e -> m (Array DL ix e)
+-- appendDL n !arr1 !arr2 = do
+--   let !sz1 = size arr1
+--       !sz2 = size arr2
+--   (k1, szl1) <- pullOutSzM sz1 n
+--   (k2, szl2) <- pullOutSzM sz2 n
+--   unless (szl1 == szl2) $ throwM $ SizeMismatchException sz1 sz2
+--   let k1' = unSz k1
+--   newSz <- insertSzM szl1 n (SafeSz (k1' + unSz k2))
+--   return $
+--     DLArray
+--       { dlComp = getComp arr1 <> getComp arr2
+--       , dlSize = newSz
+--       , dlDefault = defaultElement arr1
+--       , dlLoad =
+--           \scheduler startAt dlWrite -> do
+--             loadArrayM
+--               scheduler
+--               (\i -> dlWrite (toLinearIndex sz2 (fromLinearIndex sz1 i) + startAt))
+--             loadArrayM
+--               scheduler
+--               (\i -> dlWrite (toLinearIndex sz2 (fromLinearIndex sz1 i) + startAt))
+--             scheduleWork scheduler $
+--               iterM_ zeroIndex (unSz sz2) (pureIndex 1) (<) $ \ix ->
+--                 let i = getDim' ix n
+--                     ix' = setDim' ix n (i + k1')
+--                  in dlWrite (startAt + toLinearIndex newSz ix') (unsafeIndex arr2 ix)
+--       }
+-- {-# INLINE appendDL #-}
+
+-- | Extract a sub array across a particular dimension and append the two remaining.
+--
+-- @since 0.3.5
+popExtractM ::
+     (MonadThrow m, Extract r ix e, Source (EltRepr r ix) ix e)
+  => Dim -- ^ Dimension along which to do the extraction
+  -> Ix1 -- ^ Start index along the dimensions that needs to be extracted
+  -> Sz Ix1 -- ^ Size of the extracted array along the dimension that it will be extracted
+  -> Array r ix e
+  -> m (Array (EltRepr r ix) ix e, Array DL ix e)
+popExtractM dim startIx1 (Sz extractSzIx1) arr = do
+  let Sz szIx = size arr
+  popStartIx <- setDimM zeroIndex dim startIx1
+  popExtractSzIx <- setDimM szIx dim extractSzIx1
+  popArr <- extractM popStartIx (Sz popExtractSzIx) arr
+  leftArrSzIx <- setDimM szIx dim startIx1
+  leftArr <- extractM zeroIndex (Sz leftArrSzIx) arr
+  rightArrStartIx <- setDimM zeroIndex dim (startIx1 + extractSzIx1)
+  rightArr <- extractFromToM rightArrStartIx szIx arr --(liftIndex (subtract 1) szIx) arr
+  leftAndRight <- appendM dim leftArr rightArr
+  pure (popArr, leftAndRight)
+
+-- dropColumnM :: Dim -> Int -> Array D Ix2 e -> Array DL Ix2 e
+-- dropColumnM  matrix = fromMaybe matrix $ do
+--   let Sz (m :. n) = A.size matrix
+--   left <- A.extractFromToM (0 :. 0) (m :. i) matrix
+--   right <- A.extractFromToM (0 :. i + 1) (m :. n) matrix
+--   A.appendM 1 left right
 
 
 -- | Append two arrays together along a particular dimension. Sizes of both arrays must match, with
