@@ -49,6 +49,7 @@ import Data.Massiv.Array.Delayed.Pull
 import Data.Massiv.Array.Mutable
 import Data.Massiv.Array.Ops.Fold.Internal
 import Data.Massiv.Core.Common
+import Data.Massiv.Core.Operations
 import Data.Massiv.Core.List
 import Data.Maybe (fromMaybe)
 import Data.Typeable
@@ -194,6 +195,25 @@ instance Index ix => Load M ix e where
   {-# INLINE loadArrayM #-}
 
 instance Index ix => StrideLoad M ix e
+
+
+-- liftMArray :: (b -> e) -> Array M ix b -> Array M ix e
+-- liftMArray f arr = arr {mLinearIndex = f . mLinearIndex arr}
+-- {-# INLINE liftMArray #-}
+
+unsafeLiftMArray2 :: (t1 -> t2 -> e) -> Array M ix t1 -> Array M ix t2 -> Array M ix e
+unsafeLiftMArray2 f a1 a2 =
+    MArray (mComp a1 <> mComp a2) (mSize a1) $ \ !i -> f (mLinearIndex a1 i) (mLinearIndex a2 i)
+{-# INLINE unsafeLiftMArray2 #-}
+
+
+instance Num e => ReduceNumeric M e where
+  multiplySumArrayS a1 a2 = sumArrayS $ unsafeLiftMArray2 (*) a1 a2
+  {-# INLINE multiplySumArrayS #-}
+  evenPowerSumArrayS arr = evenPowerSumArrayS (delay arr)
+  {-# INLINE evenPowerSumArrayS #-}
+  absPowerSumArrayS arr = absPowerSumArrayS (delay arr)
+  {-# INLINE absPowerSumArrayS #-}
 
 
 -- | Ensure that Array is computed, i.e. represented with concrete elements in memory, hence is the

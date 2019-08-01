@@ -42,7 +42,7 @@ main = do
         ]
     , bgroup
         "unfoldrN"
-        [ bench "Array" $ whnf (A.computeAs P . unfoldrS_ Seq (Sz k) (\i -> (i :: Int, i + 1))) 0
+        [ bench "Array" $ whnf (A.computeAs P . unfoldrS_ (Sz k) (\i -> (i :: Int, i + 1))) 0
         , bench "Vector" $ whnf (VP.unfoldrN k (\i -> Just (i :: Int, i + 1))) 0
         ]
     ]
