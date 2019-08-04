@@ -67,10 +67,6 @@ instance (Ragged L ix e, Load DW ix e, Show e) => Show (Array DW ix e) where
 
 
 instance Index ix => Construct DW ix e where
-
-  setComp c arr = arr { dwArray = (dwArray arr) { dComp = c } }
-  {-# INLINE setComp #-}
-
   makeArray c sz f = DWArray (makeArray c sz f) Nothing
   {-# INLINE makeArray #-}
 
@@ -222,6 +218,8 @@ instance Load DW Ix1 e where
   {-# INLINE size #-}
   getComp = dComp . dwArray
   {-# INLINE getComp #-}
+  setComp c arr = arr { dwArray = (dwArray arr) { dComp = c } }
+  {-# INLINE setComp #-}
   loadArrayM scheduler arr uWrite = do
     (loadWindow, wStart, wEnd) <- loadWithIx1 (scheduleWork scheduler) arr uWrite
     let (chunkWidth, slackWidth) = (wEnd - wStart) `quotRem` numWorkers scheduler
@@ -346,6 +344,8 @@ instance Load DW Ix2 e where
   {-# INLINE size #-}
   getComp = dComp . dwArray
   {-# INLINE getComp #-}
+  setComp c arr = arr { dwArray = (dwArray arr) { dComp = c } }
+  {-# INLINE setComp #-}
   loadArrayM scheduler arr uWrite =
     loadWithIx2 (scheduleWork scheduler) arr uWrite >>=
     uncurry (loadWindowIx2 (numWorkers scheduler))
@@ -363,6 +363,8 @@ instance (Index (IxN n), Load DW (Ix (n - 1)) e) => Load DW (IxN n) e where
   {-# INLINE size #-}
   getComp = dComp . dwArray
   {-# INLINE getComp #-}
+  setComp c arr = arr { dwArray = (dwArray arr) { dComp = c } }
+  {-# INLINE setComp #-}
   loadArrayM scheduler = loadWithIxN (scheduleWork scheduler)
   {-# INLINE loadArrayM #-}
 
@@ -512,6 +514,8 @@ instance Load DW Ix2T e where
   {-# INLINE size #-}
   getComp = dComp . dwArray
   {-# INLINE getComp #-}
+  setComp c arr = arr { dwArray = (dwArray arr) { dComp = c } }
+  {-# INLINE setComp #-}
   loadArrayM scheduler arr =
     loadArrayWithStrideM scheduler oneStride (size arr) arr
   {-# INLINE loadArrayM #-}
@@ -530,6 +534,8 @@ instance Load DW Ix3T e where
   {-# INLINE size #-}
   getComp = dComp . dwArray
   {-# INLINE getComp #-}
+  setComp c arr = arr { dwArray = (dwArray arr) { dComp = c } }
+  {-# INLINE setComp #-}
   loadArrayM scheduler arr =
     loadArrayWithStrideM scheduler oneStride (size arr) arr
   {-# INLINE loadArrayM #-}
@@ -544,6 +550,8 @@ instance Load DW Ix4T e where
   {-# INLINE size #-}
   getComp = dComp . dwArray
   {-# INLINE getComp #-}
+  setComp c arr = arr { dwArray = (dwArray arr) { dComp = c } }
+  {-# INLINE setComp #-}
   loadArrayM scheduler arr = loadArrayWithStrideM scheduler oneStride (size arr) arr
   {-# INLINE loadArrayM #-}
 
@@ -557,6 +565,8 @@ instance Load DW Ix5T e where
   {-# INLINE size #-}
   getComp = dComp . dwArray
   {-# INLINE getComp #-}
+  setComp c arr = arr { dwArray = (dwArray arr) { dComp = c } }
+  {-# INLINE setComp #-}
   loadArrayM scheduler arr = loadArrayWithStrideM scheduler oneStride (size arr) arr
   {-# INLINE loadArrayM #-}
 instance StrideLoad DW Ix5T e where

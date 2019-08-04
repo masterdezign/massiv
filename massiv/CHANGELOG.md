@@ -1,3 +1,7 @@
+# 0.4.1
+
+* Move `setComp` into `Load` class.
+
 # 0.4.0
 
 * Made `Construct` a super class of `Mutable`
