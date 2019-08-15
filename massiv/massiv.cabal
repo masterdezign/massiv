@@ -44,6 +44,7 @@ library
                      , Data.Massiv.Core.Index
                      , Data.Massiv.Core.List
                      , Data.Massiv.Core.Operations
+                     , Data.Massiv.Array.Delayed.Stream
 
   other-modules:       Data.Massiv.Array.Delayed.Interleaved
                      , Data.Massiv.Array.Delayed.Pull

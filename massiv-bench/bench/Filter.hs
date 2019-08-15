@@ -1,9 +1,11 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeApplications #-}
 module Main where
 
 import Criterion.Main
 import Data.Massiv.Array as A
+import Data.Massiv.Array.Delayed.Stream as A
 import Data.Massiv.Array.Manifest.Vector as A
 import Data.Massiv.Bench as A
 import qualified Data.Vector.Primitive as VP
@@ -20,6 +22,8 @@ main = do
         "Array"
         [ bench "filter with foldlS" $ whnf (computeAs P . filterA (> 0)) arr
         , bench "filter with foldrS" $ whnf (computeAs P . filterA' (> 0)) arr
+        , bench "DS (Seq)" $ whnf (computeS @P . A.filter (> 0)) (toStream arr)
+        , bench "DS (Par)" $ whnf (computeAs P . A.filter (> 0)) (toStream (setComp Par arr))
         ]
     ]
 
