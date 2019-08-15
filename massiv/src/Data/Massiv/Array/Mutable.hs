@@ -91,6 +91,7 @@ module Data.Massiv.Array.Mutable
 
 -- TODO: add fromListM, et al.
 
+import Data.Maybe (fromMaybe)
 import Control.Monad (void, when, unless, (>=>))
 import Control.Monad.ST
 import Control.Scheduler
@@ -245,7 +246,8 @@ freezeS smarr = do
 
 newMaybeInitialized ::
      (Load r' ix e, Mutable r ix e, PrimMonad m) => Array r' ix e -> m (MArray (PrimState m) r ix e)
-newMaybeInitialized !arr = initializeNew (defaultElement arr) (size arr)
+newMaybeInitialized !arr =
+  initializeNew (defaultElement arr) (fromMaybe zeroSz (maxSize arr))
 {-# INLINE newMaybeInitialized #-}
 
 
@@ -256,10 +258,7 @@ loadArrayS ::
      forall r ix e r' m. (Load r' ix e, Mutable r ix e, PrimMonad m)
   => Array r' ix e
   -> m (MArray (PrimState m) r ix e)
-loadArrayS arr = do
-  marr <- newMaybeInitialized arr
-  loadArrayM trivialScheduler_ arr (unsafeLinearWrite marr)
-  pure marr
+loadArrayS arr = newMaybeInitialized arr >>= (`unsafeLoadIntoS` arr)
 {-# INLINE loadArrayS #-}
 
 
@@ -271,10 +270,7 @@ loadArray ::
   => Array r' ix e
   -> m (MArray RealWorld r ix e)
 loadArray arr =
-  liftIO $ do
-    marr <- newMaybeInitialized arr
-    withScheduler_ (getComp arr) $ \scheduler -> loadArrayM scheduler arr (unsafeLinearWrite marr)
-    pure marr
+  liftIO $ newMaybeInitialized arr >>= (`unsafeLoadInto` arr)
 {-# INLINE loadArray #-}
 
 
@@ -284,16 +280,21 @@ loadArray arr =
 --
 -- @since 0.1.3
 computeInto ::
-     (Load r' ix' e, Mutable r ix e, MonadIO m)
+     (Load r' ix' e, Mutable r ix' e, Mutable r ix e, MonadIO m)
   => MArray RealWorld r ix e -- ^ Target Array
   -> Array r' ix' e -- ^ Array to load
   -> m ()
-computeInto !mArr !arr =
+computeInto !marr !arr =
   liftIO $ do
-    unless (totalElem (msize mArr) == totalElem (size arr)) $
-      throwM $ SizeElementsMismatchException (msize mArr) (size arr)
-    withScheduler_ (getComp arr) $ \scheduler -> loadArrayM scheduler arr (unsafeLinearWrite mArr)
+    sz <- maybe
+      (error "Can't load streams with unknown size. TODO: switch to proper exception")
+      pure
+      (maxSize arr)
+    unless (totalElem (msize marr) == totalElem sz) $
+      throwM $ SizeElementsMismatchException (msize marr) (size arr)
+    void $ unsafeLoadInto (unsafeMutableResize sz marr) arr
 {-# INLINE computeInto #-}
+
 
 
 -- | Create a mutable array using an index aware generating action.

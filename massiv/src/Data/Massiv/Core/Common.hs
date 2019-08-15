@@ -51,6 +51,7 @@ module Data.Massiv.Core.Common
   , elemsCount
   , isEmpty
   , Sz(SafeSz)
+  , module Size
   -- * Indexing
   , (!?)
   , index
@@ -82,6 +83,7 @@ module Data.Massiv.Core.Common
   , MonadUnliftIO
   , MonadIO(liftIO)
   , PrimMonad(PrimState)
+  , RealWorld
   ) where
 
 #if !MIN_VERSION_base(4,11,0)
@@ -92,11 +94,12 @@ import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Unlift (MonadIO(liftIO), MonadUnliftIO)
 import Control.Monad.Primitive
 import Control.Scheduler (Comp(..), Scheduler, WorkerStates, numWorkers,
-                          scheduleWork, scheduleWork_)
+                          scheduleWork, scheduleWork_, withScheduler_, trivialScheduler_)
 import Data.Massiv.Core.Exception
 import Data.Massiv.Core.Index
 import Data.Massiv.Core.Index.Internal (Sz(SafeSz))
 import Data.Typeable
+import Data.Vector.Fusion.Bundle.Size as Size
 
 #include "massiv.h"
 
@@ -257,6 +260,32 @@ class (Typeable r, Index ix) => Load r ix e where
   defaultElement _ = Nothing
   {-# INLINE defaultElement #-}
 
+  maxSize :: Array r ix e -> Maybe (Sz ix)
+  maxSize = Just . size
+  {-# INLINE maxSize #-}
+
+  unsafeLoadIntoS ::
+       (Mutable r' ix e, PrimMonad m)
+    => MArray (PrimState m) r' ix e
+    -> Array r ix e
+    -> m (MArray (PrimState m) r' ix e)
+  unsafeLoadIntoS marr arr = do
+    loadArrayM trivialScheduler_ arr (unsafeLinearWrite marr)
+    pure marr
+  {-# INLINE unsafeLoadIntoS #-}
+
+  unsafeLoadInto ::
+       (Mutable r' ix e, MonadIO m)
+    => MArray RealWorld r' ix e
+    -> Array r ix e
+    -> m (MArray RealWorld r' ix e)
+  unsafeLoadInto marr arr = do
+    liftIO $ withScheduler_ (getComp arr) $ \scheduler ->
+      loadArrayM scheduler arr (unsafeLinearWrite marr)
+    pure marr
+  {-# INLINE unsafeLoadInto #-}
+
+
 
 class Load r ix e => StrideLoad r ix e where
   -- | Load an array into memory with stride. Default implementation requires an instance of
@@ -318,6 +347,11 @@ class (Construct r ix e, Manifest r ix e) => Mutable r ix e where
   --
   -- @since 0.4.1
   unsafeMutableSlice :: Ix1 -> Sz1 -> MArray s r ix e -> MArray s r Ix1 e
+
+  -- | Get the size of a mutable array.
+  --
+  -- @since 0.5.0
+  unsafeMutableResize :: Sz ix' -> MArray s r ix e -> MArray s r ix' e
 
   -- | Convert immutable array into a mutable array without copy.
   --
@@ -876,3 +910,4 @@ elemsCount = totalElem . size
 isEmpty :: Load r ix e => Array r ix e -> Bool
 isEmpty !arr = 0 == elemsCount arr
 {-# INLINE isEmpty #-}
+

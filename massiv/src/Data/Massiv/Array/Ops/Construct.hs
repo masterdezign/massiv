@@ -122,7 +122,7 @@ newtype STA r ix a = STA {_runSTA :: forall s. MArray s r ix a -> ST s (Array r 
 
 runSTA :: Mutable r ix e => Sz ix -> STA r ix e -> Array r ix e
 runSTA !sz (STA m) = runST (unsafeNew sz >>= m)
-{-# INLINE runSTA  #-}
+{-# INLINE runSTA #-}
 
 -- | Similar to `makeArray`, but construct the array sequentially using an `Applicative` interface.
 --
@@ -147,7 +147,7 @@ makeArrayA !sz f =
             (go (i + 1))
         | otherwise = pure (STA (unsafeFreeze Seq))
    in runSTA sz <$> go 0
-{-# INLINE makeArrayA  #-}
+{-# INLINE makeArrayA #-}
 
 
 -- | Same as `makeArrayA`, but with ability to supply result array representation.

@@ -172,6 +172,9 @@ instance (Index ix, Prim e) => Mutable P ix e where
   unsafeMutableSlice i k (MPArray _ o ma) = MPArray k (o + i) ma
   {-# INLINE unsafeMutableSlice #-}
 
+  unsafeMutableResize sz (MPArray _ o ma) = MPArray sz o ma
+  {-# INLINE unsafeMutableResize #-}
+
   unsafeThaw (PArray _ sz o a) = MPArray sz o <$> unsafeThawByteArray a
   {-# INLINE unsafeThaw #-}
 

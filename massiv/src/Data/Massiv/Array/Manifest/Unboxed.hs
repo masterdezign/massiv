@@ -164,6 +164,9 @@ instance (VU.Unbox e, Index ix) => Mutable U ix e where
   unsafeMutableSlice i k (MUArray _ mv) = MUArray k $ MVU.unsafeSlice i (unSz k) mv
   {-# INLINE unsafeMutableSlice #-}
 
+  unsafeMutableResize sz (MUArray _ mv) = MUArray sz mv
+  {-# INLINE unsafeMutableResize #-}
+
   unsafeThaw (UArray _ sz v) = MUArray sz <$> VU.unsafeThaw v
   {-# INLINE unsafeThaw #-}
 

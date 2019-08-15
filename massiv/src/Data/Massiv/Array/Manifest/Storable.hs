@@ -148,6 +148,9 @@ instance (Index ix, VS.Storable e) => Mutable S ix e where
   unsafeMutableSlice i k (MSArray _ mv) = MSArray k $ MVS.unsafeSlice i (unSz k) mv
   {-# INLINE unsafeMutableSlice #-}
 
+  unsafeMutableResize sz (MSArray _ mv) = MSArray sz mv
+  {-# INLINE unsafeMutableResize #-}
+
   unsafeThaw (SArray _ sz v) = MSArray sz <$> VS.unsafeThaw v
   {-# INLINE unsafeThaw #-}
 
