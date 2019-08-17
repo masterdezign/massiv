@@ -16,13 +16,15 @@ main = do
   let !sz = Sz (600 :. 1000)
       !arr = computeAs P $ resize' (Sz $ totalElem sz) $ arrRLightIx2 DL Seq sz
       !v = A.toVector arr :: VP.Vector Double
+      !arrs = toStream arr
   defaultMain
-    [ bgroup "Vector" [bench "filter >=0" $ whnf (VP.filter (> 0)) v]
+    [ bgroup "Vector" [bench "filter > 0" $ whnf (VP.filter (> 0)) v]
     , bgroup
         "Array"
         [ bench "filter with foldlS" $ whnf (computeAs P . filterA (> 0)) arr
         , bench "filter with foldrS" $ whnf (computeAs P . filterA' (> 0)) arr
-        , bench "DS (Seq)" $ whnf (computeS @P . A.filter (> 0)) (toStream arr)
+        , bench "DS (Seq) (no filter)" $ whnf (computeS @P) arrs
+        , bench "DS (Seq)" $ whnf (computeS @P . A.filter (> 0)) arrs
         , bench "DS (Par)" $ whnf (computeAs P . A.filter (> 0)) (toStream (setComp Par arr))
         ]
     ]

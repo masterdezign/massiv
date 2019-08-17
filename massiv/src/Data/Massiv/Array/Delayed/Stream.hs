@@ -1,8 +1,10 @@
-{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -43,8 +45,13 @@ import Prelude hiding (zipWith)
 import Control.Scheduler as Scheduler
 import Data.List.NonEmpty
 
+import Debug.Trace
 
-data Streams m e = Streams !(S.Stream m e) ![(Ix1, S.Stream m e)]
+--data Streams m e = Streams !(S.Stream m e) ![Ix1, S.Stream m e)]
+
+--data Streams m e = forall s. Streams (s -> m (S.Step s e)) [(Ix1, s)]
+
+newtype Streams m e = Streams (S.Stream m (Ix1, S.Stream m e))
 
 data DS = DS
 
@@ -54,6 +61,9 @@ data instance Array DS Ix1 e = DSArray
   , dsStreams :: !(forall m . Monad m => Streams m e)
   }
 
+-- data Streams m e where
+--   Stream :: (Ix1 -> S.Stream m e) -> Ix1 -> Streams m e
+--   None  :: Streams m e
 
 instance (Ragged L Ix1 e, Show e) => Show (Array DS Ix1 e) where
   showsPrec = showsArrayPrec (computeAs B)
@@ -61,8 +71,9 @@ instance (Ragged L Ix1 e, Show e) => Show (Array DS Ix1 e) where
 
 
 instance Construct DS Ix1 e where
-  makeArray comp (Sz k) f = DSArray comp (Exact k) (Streams (S.generate k f) [])
-  {-# INLINE makeArray #-}
+  -- makeArray comp sz f = toStream (makeArrayR D comp sz f)
+  -- makeArray comp (Sz k) f = DSArray comp (Exact k) (Streams (S.generate k f) [])
+  -- {-# INLINE makeArray #-}
 
 
 mapMaybe :: (a -> Maybe e) -> Array DS Ix1 a -> Array DS Ix1 e
@@ -70,8 +81,9 @@ mapMaybe f arr =
   arr {dsSize = toMax (dsSize arr), dsStreams = liftStreams (S.mapMaybe f) (dsStreams arr)}
 {-# INLINE mapMaybe #-}
 
-liftStreams :: (S.Stream m a -> S.Stream m b) -> Streams m a -> Streams m b
-liftStreams f (Streams s ss) = Streams (f s) (fmap f <$> ss)
+
+liftStreams :: Monad m => (S.Stream m a -> S.Stream m b) -> Streams m a -> Streams m b
+liftStreams f (Streams ss) = Streams (fmap (fmap f) ss)
 {-# INLINE liftStreams #-}
 
 filter :: (e -> Bool) -> Array DS Ix1 e -> Array DS Ix1 e
@@ -79,8 +91,8 @@ filter f = mapMaybe (\e -> if f e then Just e else Nothing)
 {-# INLINE filter #-}
 
 -- | Generate a stream from its indices
-unsafeGenerateFromM :: Monad m => Int -> Int -> (Int -> m a) -> S.Stream m a
-unsafeGenerateFromM n offset f = n `seq` S.Stream step offset
+unsafeGenerateFromToM :: Monad m => Int -> Int -> (Int -> m a) -> S.Stream m a
+unsafeGenerateFromToM !offset !n f = S.Stream step offset
   where
     step i
       | i < n = do
@@ -88,37 +100,28 @@ unsafeGenerateFromM n offset f = n `seq` S.Stream step offset
         pure $ S.Yield x (i + 1)
       | otherwise = pure S.Done
     {-# INLINE step #-}
-{-# INLINE unsafeGenerateFromM #-}
+{-# INLINE unsafeGenerateFromToM #-}
 
-unsafeGenerateFrom :: Monad m => Int -> Int -> (Int -> a) -> S.Stream m a
-unsafeGenerateFrom n offset f = unsafeGenerateFromM n offset (pure . f)
-{-# INLINE unsafeGenerateFrom #-}
+unsafeGenerateFromTo :: Monad m => Int -> Int -> (Int -> a) -> S.Stream m a
+unsafeGenerateFromTo offset n f = unsafeGenerateFromToM offset n (pure . f)
+{-# INLINE unsafeGenerateFromTo #-}
 
 toStream :: forall r ix e . Source r ix e => Array r ix e -> Array DS Ix1 e
-toStream arr = DSArray comp (Exact k) strs
+toStream arr = DSArray comp (Exact k) (Streams (S.Stream chunks 0))
   where
-    k = totalElem $ size arr
-    comp = getComp arr
-    n = unsafePerformIO $ getCompWorkers comp
-    strs :: Monad m => Streams m e
-    strs =
-      case quotRem k n of
-        (0, _) -> Streams (unsafeGenerateFrom k 0 (unsafeLinearIndex arr)) []
-        (1, 0) -> Streams (unsafeGenerateFrom k 0 (unsafeLinearIndex arr)) []
-        (q, r) ->
-          let go !i !offset !acc
-                | 1 < i =
-                  go
-                    (i - 1)
-                    (offset - q)
-                    ((offset, unsafeGenerateFrom q offset (unsafeLinearIndex arr)) : acc)
-                | otherwise = acc
-              slackStart = k - r
-              slack =
-                if r == 0
-                  then []
-                  else [(slackStart, unsafeGenerateFrom r slackStart (unsafeLinearIndex arr))]
-           in Streams (unsafeGenerateFrom q 0 (unsafeLinearIndex arr)) (go n (slackStart - q) slack)
+    !k = totalElem $ size arr
+    !comp = getComp arr
+    !n = unsafePerformIO $ getCompWorkers comp
+    !(q, r) = quotRem k n
+    !lastChunkStart = k - r - q
+    chunks :: Monad m => Int -> m (S.Step Int (Int, S.Stream m e))
+    chunks i
+      | i <= lastChunkStart =
+        let !q' = i + q
+        in pure $ S.Yield (i, unsafeGenerateFromTo i q' (unsafeLinearIndex arr)) q'
+      | i < k = pure $ S.Yield (i, unsafeGenerateFromTo i k (unsafeLinearIndex arr)) (i + r)
+      | otherwise = pure S.Done
+    {-# INLINE chunks #-}
 {-# INLINE toStream #-}
 
 linearIndex :: Source r ix e => Array r ix e -> Int -> e
@@ -126,37 +129,45 @@ linearIndex arr i
   | i < totalElem (size arr) = unsafeLinearIndex arr i
   | otherwise = error $ "Out of bounds: " ++ show i ++ "   " ++ show (totalElem (size arr))
 
--- | Load the stream into array starting with an index. It is expected that the stream
--- does not produce more elements than array is capable of handling.
-loadStream :: Monad m => (Ix1 -> e -> m ()) -> Ix1 -> S.Stream m e -> m Ix1
-loadStream write = S.foldlM (\i e -> write i e >> pure (i + 1))
-{-# INLINE loadStream #-}
-
--- | Should only be used when the size of mutable array matches the sie of the stream
--- exactly
 loadStreams_ :: Monad m => Scheduler m () -> (Ix1 -> e -> m ()) -> Streams m e -> m ()
-loadStreams_ scheduler write (Streams str strs) = do
-  scheduleWork_ scheduler (void $ loadStream write 0 str)
-  Scheduler.traverse_ (scheduleWork_ scheduler . void . uncurry (loadStream write)) strs
+loadStreams_ scheduler write (Streams strs) =
+  S.mapM_ (\(i, s) -> scheduleWork_ scheduler $ void $ loadStream write i s) strs
 {-# INLINE loadStreams_ #-}
 
-loadStreams ::
-     (Mutable r ix e, PrimMonad m)
-  => ((Scheduler m Ix1 -> m ()) -> m [Ix1])
-  -> MArray (PrimState m) r ix e
-  -> Streams m e
-  -> m (NonEmpty Ix1)
-loadStreams withScheduler' marr (Streams str strs) = do
-  ys <-
-    withScheduler' $ \scheduler -> do
-      scheduleWork scheduler (loadStream (unsafeLinearWrite marr) 0 str)
-      Scheduler.traverse_
-        (scheduleWork scheduler . uncurry (loadStream (unsafeLinearWrite marr)))
-        strs
-  case ys of
-    [] -> error "Impossible <loadStreams>: returned sizes from Scheduler are empty"
-    (x:xs) -> pure (x :| xs)
+loadStreams'_ :: Monad m => Scheduler m () -> (Ix1 -> e -> m ()) -> Streams m e -> m ()
+loadStreams'_ _scheduler write (Streams strs) =
+  void $ loadStream write 0 $ S.concatMap snd strs
+  --S.mapM_ (uncurry (loadStream write)) strs
+{-# INLINE loadStreams'_ #-}
+
+-- | Load the stream using a writing function starting at an index. Returns the index where it
+-- has stopped.
+loadStream :: Monad m => (Ix1 -> e -> m ()) -> Ix1 -> S.Stream m e -> m Ix1
+loadStream write = S.foldlM' (\i e -> (i + 1) <$ write i e)
+{-# INLINE loadStream #-}
+
+loadStreams :: Monad m => Scheduler m (Ix1, Ix1) -> (Ix1 -> e -> m ()) -> Streams m e -> m ()
+loadStreams scheduler write (Streams strs) =
+  S.mapM_ (\(i, s) -> scheduleWork scheduler ((i, ) <$> loadStream write i s)) strs
 {-# INLINE loadStreams #-}
+
+-- loadStreamsWithScheduler ::
+--      (Mutable r ix e, PrimMonad m)
+--   => ((Scheduler m (Ix1, Ix1) -> m ()) -> m [(Ix1, Ix1)])
+--   -> MArray (PrimState m) r ix e
+--   -> Streams m e
+--   -> m (NonEmpty Ix1)
+-- loadStreamsWithScheduler withScheduler' marr strs = do
+--   withScheduler' $ \scheduler -> do
+--       loadStreams' scheduler (unsafeLinearWrite marr) strs
+--       S.foldlM
+--         (\_ (i, s) -> scheduleWork scheduler $ loadStream (unsafeLinearWrite marr) i s)
+--         []
+--         strs
+--   case ys of
+--     [] -> pure (0 :| [])
+--     (x:xs) -> pure (x :| xs)
+-- {-# INLINE loadStreams #-}
 
 unsafeLinearMove ::
      (Mutable r ix' e, Mutable r ix e, PrimMonad m)
@@ -184,17 +195,20 @@ moveMisaligned marr prevEnd (start, end) = do
 {-# INLINE moveMisaligned #-}
 
 loadStreamsUpper ::
-     (Mutable r ix e, PrimMonad m)
-  => ((Scheduler m Ix1 -> m ()) -> m [Ix1])
+     forall r ix e m . (Mutable r ix e, PrimMonad m)
+  => ((Scheduler m (Ix1, Ix1) -> m ()) -> m [(Ix1, Ix1)])
   -> MArray (PrimState m) r ix e
   -> Streams m e
   -> m (MArray (PrimState m) r Ix1 e)
-loadStreamsUpper withScheduler' marr strs@(Streams _ ss) = do
-  firstEnd :| ends <- loadStreams withScheduler' marr strs
-  k <- F.foldlM (moveMisaligned marr) firstEnd (Prelude.zip (Prelude.map fst ss) ends)
+loadStreamsUpper withScheduler' marr strs = do
+  xs <- withScheduler' $ \ scheduler ->
+    loadStreams scheduler (unsafeLinearWrite marr) strs
+  k <- F.foldlM (moveMisaligned marr) 0 xs
   pure $ unsafeMutableSlice 0 (SafeSz k) marr
+  -- case ys of
+  --   [] -> unsafeMutableResize zeroSz <$> unsafeNew (zeroSz :: Sz ix)
+  --   (_, firstEnd):xs -> do
 {-# INLINE loadStreamsUpper #-}
-
 
 loadWhileGrowing ::
      (Mutable r Ix1 e, PrimMonad m)
@@ -212,15 +226,15 @@ loadWhileGrowing (marr, i) e = do
     k = unSz (msize marr)
 {-# INLINE loadWhileGrowing #-}
 
-loadStreamsUnknown ::
-     (Mutable r Ix1 e, PrimMonad m)
-  => MArray (PrimState m) r Ix1 e
-  -> Streams m e
-  -> m (MArray (PrimState m) r Ix1 e)
-loadStreamsUnknown marr (Streams s ss) = do
-  (marr', k') <- F.foldlM (S.foldlM loadWhileGrowing) (marr, 0) (s : Prelude.map snd ss)
-  pure (unsafeMutableSlice 0 (SafeSz k') marr')
-{-# INLINE loadStreamsUnknown #-}
+-- loadStreamsUnknown ::
+--      (Mutable r Ix1 e, PrimMonad m)
+--   => MArray (PrimState m) r Ix1 e
+--   -> Streams m e
+--   -> m (MArray (PrimState m) r Ix1 e)
+-- loadStreamsUnknown marr (Streams s ss) = do
+--   (marr', k') <- F.foldlM (S.foldlM loadWhileGrowing) (marr, 0) (s : Prelude.map snd ss)
+--   pure (unsafeMutableSlice 0 (SafeSz k') marr')
+-- {-# INLINE loadStreamsUnknown #-}
 
 
 instance Load DS Ix1 e where
@@ -230,28 +244,28 @@ instance Load DS Ix1 e where
   setComp comp arr = arr { dsComp = comp }
   {-# INLINE setComp #-}
 
-  size (DSArray _ sz (Streams s ss)) =
-    case sz of
-      Exact k -> SafeSz k
-      _ -> SafeSz (runIdentity (S.length s) +
-                   F.foldl' (+) 0 (runIdentity (mapM (S.length . snd) ss)))
-  {-# INLINE size #-}
+  -- size (DSArray _ sz (Streams s ss)) =
+  --   case sz of
+  --     Exact k -> SafeSz k
+  --     _ -> SafeSz (runIdentity (S.length s) +
+  --                  F.foldl' (+) 0 (runIdentity (mapM (S.length . snd) ss)))
+  -- {-# INLINE size #-}
 
   maxSize arr = SafeSz <$> upperBound (dsSize arr)
   {-# INLINE maxSize #-}
 
   loadArrayM !scheduler (DSArray _ sz strs) write =
     case sz of
-      Exact _ -> loadStreams_ scheduler write strs
+      Exact _ -> loadStreams'_ scheduler write strs
       _       -> error $ "Loading of streams with unknown size is not supported by loadArrayM." ++
                          "Use `unsafeLoadInto` instead"
   {-# INLINE loadArrayM #-}
 
   unsafeLoadIntoS marr (DSArray _ sz strs) =
     case sz of
-      Exact _ -> marr <$ loadStreams_ trivialScheduler_ (unsafeLinearWrite marr) strs
+      Exact _ -> marr <$ loadStreams'_ trivialScheduler_ (unsafeLinearWrite marr) strs
       Max _ -> loadStreamsUpper withTrivialScheduler marr strs
-      Unknown -> loadStreamsUnknown marr strs
+      --Unknown -> loadStreamsUnknown marr strs
   {-# INLINE unsafeLoadIntoS #-}
 
   unsafeLoadInto marr (DSArray comp sz strs) =
@@ -259,7 +273,7 @@ instance Load DS Ix1 e where
       Exact _ -> marr <$ liftIO (withScheduler_ comp $ \scheduler ->
                                     loadStreams_ scheduler (unsafeLinearWrite marr) strs)
       Max _ -> liftIO (loadStreamsUpper (withScheduler comp) marr strs)
-      Unknown -> liftIO $ loadStreamsUnknown marr strs
+      --Unknown -> liftIO $ loadStreamsUnknown marr strs
   {-# INLINE unsafeLoadInto #-}
 
 
