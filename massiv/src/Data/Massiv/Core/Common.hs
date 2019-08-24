@@ -414,7 +414,7 @@ class (Construct r ix e, Manifest r ix e) => Mutable r ix e where
                    -> Ix1 -- ^ Starting index at target array
                    -> Sz1 -- ^ Number of elements to copy
                    -> m ()
-  unsafeLinearCopy marrFrom iFrom marrTo iTo (SafeSz k) = do
+  unsafeLinearCopy marrFrom iFrom marrTo iTo (Sz k) = do
     let delta = iTo - iFrom
     loopM_ iFrom (< k + iFrom) (+1) $ \i ->
       unsafeLinearRead marrFrom i >>= unsafeLinearWrite marrTo (i + delta)
@@ -430,10 +430,9 @@ class (Construct r ix e, Manifest r ix e) => Mutable r ix e where
                         -> Ix1 -- ^ Starting index at target array
                         -> Sz1 -- ^ Number of elements to copy
                         -> m ()
-  unsafeArrayLinearCopy arrFrom iFrom marrTo iTo (SafeSz k) = do
-    let delta = iTo - iFrom
-    loopM_ iFrom (< k + iFrom) (+1) $ \i ->
-      unsafeLinearWrite marrTo (i + delta) (unsafeLinearIndex arrFrom i)
+  unsafeArrayLinearCopy arrFrom iFrom marrTo iTo k = do
+    marrFrom <- unsafeThaw arrFrom
+    unsafeLinearCopy marrFrom iFrom marrTo iTo k
   {-# INLINE unsafeArrayLinearCopy #-}
 
   -- | Linearly reduce the size of an array. Total number of elements should be smaller or
@@ -465,7 +464,7 @@ unsafeDefaultLinearShrink ::
   => MArray (PrimState m) r ix e
   -> Sz ix
   -> m (MArray (PrimState m) r ix e)
-unsafeDefaultLinearShrink marr sz = do
+unsafeDefaultLinearShrink !marr !sz = do
   marr' <- unsafeNew sz
   unsafeLinearCopy marr 0 marr' 0 $ SafeSz (totalElem sz)
   pure marr'
