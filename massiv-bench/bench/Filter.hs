@@ -11,6 +11,7 @@ import Criterion.Main
 import Data.Foldable as F
 import Data.Massiv.Array as A
 import Data.Massiv.Array.Manifest.Vector as A
+import Data.Massiv.Array.Delayed.Stream
 import Data.Massiv.Array.Unsafe as A
 import Data.Massiv.Bench as A
 import qualified Data.Vector as VB
@@ -26,20 +27,30 @@ main = do
   defaultMain
     [ env (pure (A.toVector arrP)) $ \(v :: VP.Vector Double) ->
         bgroup "Vector P" [
-          bench "filter > 0" $ nf (VP.filter (> 0)) v
+            bench "filter > 0" $ nf (VP.filter (> 0)) v
+          , bench "filterM > 0" $ nf (VP.filterM (\i -> Just (i > 0))) v
+          , bench "traverse" $ nf (VP.mapM Just) v
         ]
-    , env (pure (A.toVector (convert arrP :: Array B Ix1 Double))) $ \(v :: VB.Vector Double) ->
-        bgroup "Vector B" [
-          bench "filter > 0" $ nf (VB.filter (> 0)) v
-        ]
+    -- , env (pure (A.toVector (convert arrP :: Array B Ix1 Double))) $ \(v :: VB.Vector Double) ->
+    --     bgroup "Vector B" [
+    --       bench "filter > 0" $ nf (VB.filter (> 0)) v
+    --     ]
     , env (pure (A.toList arrP)) $ \xs ->
         bgroup "List" [
           bench "filter > 0" $ nf (P.filter (> 0)) xs
+          , bench "filterM > 0" $ nf (filterM (\i -> Just (i > 0))) xs
         ]
     , env (pure arrP) $ \ arr -> bgroup
         "Array"
         [ -- bench "filter with foldrS" $ whnf (computeAs P . filterA' (> 0)) arr
-          bench "filterS" $ nf (filterS @P (> 0)) arr
+          bench "traverseA' (mapM')" $ nf (mapM' @P Just) arr
+        , bench "traverseA'" $ nf (traverseA' @P Just) arr
+        , bench "traverseA" $ nf (A.mapM @P Just) arr
+        , bench "filterS" $ nf (filterS @P (> 0)) arr
+        , bench "filterSM" $ nf (filterSM @P (\i -> Just (i > 0))) arr
+        , bench "filterComp" $ nf (filterComp @P (> 0)) (setComp Par arr)
+
+        , bench "filterS'" $ nf (filterS' @P (> 0)) arr
         , bench "filterA (Seq)" $ nf (filterA @P (> 0)) arr
         , bench "filterA (Par)" $ nf (filterA @P (> 0)) (setComp Par arr)
         ]
@@ -67,8 +78,8 @@ unsafeLinearIndex'
 unsafeLinearIndex' arr i = return $! unsafeLinearIndex arr i
 {-# INLINE unsafeLinearIndex' #-}
 
-filterS :: (Mutable r Ix1 e, Source r' ix e) => (e -> Bool) -> Array r' ix e -> Array r Ix1 e
-filterS f arr =
+filterS' :: (Mutable r Ix1 e, Source r' ix e) => (e -> Bool) -> Array r' ix e -> Array r Ix1 e
+filterS' f arr =
   runST $ do
     let totalLength = totalElem (size arr)
     marr <- unsafeNew (SafeSz totalLength)
@@ -81,7 +92,7 @@ filterS f arr =
         {-# INLINE writeMaybe #-}
     k <- loopM 0 (< totalLength) (+ 1) 0 writeMaybe
     unsafeLinearShrink marr (SafeSz k) >>= unsafeFreeze (getComp arr)
-{-# INLINE filterS #-}
+{-# INLINE filterS' #-}
 
 
 mapMaybeS :: (Mutable r Ix1 a, Source r' ix e) => (e -> Maybe a) -> Array r' ix e -> Array r Ix1 a
@@ -209,32 +220,32 @@ filterA f = ifilterA (const f)
 
 
 
-moveMisaligned ::
-     (PrimMonad m, Mutable r ix e)
-  => MArray (PrimState m) r ix e
-  -> MArray (PrimState m) r ix e
-  -> Ix1
-  -> (Ix1, Ix1)
-  -> m Ix1
-moveMisaligned marrs marrd prevEnd (start, end) = do
-  let !len = end - start
-  unless (prevEnd == start) $
-    unsafeLinearCopy marrs start marrd prevEnd (SafeSz len)
-  pure $! prevEnd + len
-{-# INLINE moveMisaligned #-}
+-- moveMisaligned ::
+--      (PrimMonad m, Mutable r ix e)
+--   => MArray (PrimState m) r ix e
+--   -> MArray (PrimState m) r ix e
+--   -> Ix1
+--   -> (Ix1, Ix1)
+--   -> m Ix1
+-- moveMisaligned marrs marrd prevEnd (start, end) = do
+--   let !len = end - start
+--   unless (prevEnd == start) $
+--     unsafeLinearCopy marrs start marrd prevEnd (SafeSz len)
+--   pure $! prevEnd + len
+-- {-# INLINE moveMisaligned #-}
 
 
 
-unsafeLinearMove ::
-     (Mutable r ix' e, Mutable r ix e, PrimMonad m)
-  => MArray (PrimState m) r ix' e -- ^ Source mutable array
-  -> Ix1 -- ^ Starting index at source array
-  -> MArray (PrimState m) r ix e -- ^ Target mutable array
-  -> Ix1 -- ^ Starting index at target array
-  -> Sz1 -- ^ Number of elements to copy
-  -> m ()
-unsafeLinearMove src isrc dst idst (Sz k) =
-  let delta = idst - isrc
-   in loopM_ isrc (< k + isrc) (+ 1) $ \i ->
-        unsafeLinearRead src i >>= unsafeLinearWrite dst (i + delta)
-{-# INLINE unsafeLinearMove #-}
+-- unsafeLinearMove ::
+--      (Mutable r ix' e, Mutable r ix e, PrimMonad m)
+--   => MArray (PrimState m) r ix' e -- ^ Source mutable array
+--   -> Ix1 -- ^ Starting index at source array
+--   -> MArray (PrimState m) r ix e -- ^ Target mutable array
+--   -> Ix1 -- ^ Starting index at target array
+--   -> Sz1 -- ^ Number of elements to copy
+--   -> m ()
+-- unsafeLinearMove src isrc dst idst (Sz k) =
+--   let delta = idst - isrc
+--    in loopM_ isrc (< k + isrc) (+ 1) $ \i ->
+--         unsafeLinearRead src i >>= unsafeLinearWrite dst (i + delta)
+-- {-# INLINE unsafeLinearMove #-}

@@ -275,7 +275,7 @@ liftArray2 f !arr1 !arr2
 -- @since 0.2.6
 --
 traverseA ::
-     (Source r' ix a, Mutable r ix e, Applicative f)
+     forall r r' ix e a f. (Source r' ix a, Mutable r ix e, Applicative f)
   => (a -> f e)
   -> Array r' ix a
   -> f (Array r ix e)

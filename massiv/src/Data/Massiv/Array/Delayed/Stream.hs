@@ -1,4 +1,3 @@
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -9,6 +8,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- |
@@ -24,28 +24,273 @@ module Data.Massiv.Array.Delayed.Stream where
   -- , Array(..)
   -- ) where
 
-import System.IO.Unsafe (unsafePerformIO)
-import Data.Primitive.MutVar
+import Control.Applicative
+import Control.Monad (unless, when, void)
+import Control.Monad.ST
+import Control.Scheduler as Scheduler
 import Control.Scheduler.Internal
-import Control.Monad (unless, void)
 import qualified Data.Foldable as F
 import Data.Functor.Identity
-import Data.Massiv.Array.Ops.Fold.Internal as A
+import Data.List.NonEmpty
 import Data.Massiv.Array.Delayed.Pull
 import Data.Massiv.Array.Manifest
 import Data.Massiv.Array.Manifest.Internal
+import Data.Massiv.Array.Ops.Fold.Internal as A
 import Data.Massiv.Core.Common
 import Data.Massiv.Core.List (L, showArrayList, showsArrayPrec)
 import Data.Massiv.Core.Operations
+import Data.Primitive.MutVar
 import Data.Typeable
 import qualified Data.Vector.Fusion.Stream.Monadic as S
+import Data.Vector.Fusion.Util
 import GHC.Base (build)
 import Numeric
 import Prelude hiding (zipWith)
-import Control.Scheduler as Scheduler
-import Data.List.NonEmpty
+import System.IO.Unsafe (unsafePerformIO)
 
 import Debug.Trace
+
+data Stream m e = Stream
+  { sStream :: S.Stream m e
+  , sSize   :: Size
+  }
+
+toStream :: forall r ix e m . (Monad m, Source r ix e) => Array r ix e -> Stream m e
+toStream arr = k `seq` arr `seq` Stream (S.Stream step 0) (Exact k)
+  where
+    k = totalElem $ size arr
+    step i
+      | i < k =
+        let e = unsafeLinearIndex arr i
+         in e `seq` return $ S.Yield e (i + 1)
+      | otherwise = return S.Done
+    {-# INLINE step #-}
+{-# INLINE toStream #-}
+
+istream :: forall r ix e m . (Monad m, Source r ix e) => Array r ix e -> Stream m (Ix1, e)
+istream arr = k `seq` arr `seq` Stream (S.Stream step 0) (Exact k)
+  where
+    k = totalElem $ size arr
+    step i
+      | i < k =
+        let e = unsafeLinearIndex arr i
+         in e `seq` return $ S.Yield (i, e) (i + 1)
+      | otherwise = return S.Done
+    {-# INLINE step #-}
+{-# INLINE istream #-}
+
+
+fromStreamM :: forall r e m. (Monad m, Mutable r Ix1 e) => Stream m e -> m (Array r Ix1 e)
+fromStreamM (Stream str sz) = do
+  xs <- S.toList str
+  case upperBound sz of
+    Nothing -> pure $! unstreamUnknown (S.fromList xs)
+    Just k  -> pure $! unstreamMax k (S.fromList xs)
+{-# INLINE fromStreamM #-}
+
+
+traverseA' ::
+     (Mutable r ix e, Source r' ix a, Applicative f)
+  => (a -> f e)
+  -> Array r' ix a
+  -> f (Array r ix e)
+traverseA' f arr =
+  unstreamExact (size arr) . S.fromList <$> Prelude.traverse f xs
+  where
+    xs = unId (S.toList (sStream (toStream arr)))
+{-# INLINE traverseA' #-}
+
+
+mapM' ::
+     (Mutable r ix e, Source r' ix a, Monad m)
+  => (a -> m e)
+  -> Array r' ix a
+  -> m (Array r ix e)
+mapM' f arr = fromStreamExactM (size arr) . sStream . mapStrM f . toStream $ arr
+{-# INLINE mapM' #-}
+
+
+fromStream :: forall r e . Mutable r Ix1 e => Stream Id e -> Array r Ix1 e
+fromStream (Stream str sz) =
+  case upperBound sz of
+    Nothing -> unstreamUnknown str
+    Just k  -> unstreamMax k str
+{-# INLINE fromStream #-}
+
+
+fromStreamExactM ::
+     forall r ix e m. (Monad m, Mutable r ix e)
+  => Sz ix
+  -> S.Stream m e
+  -> m (Array r ix e)
+fromStreamExactM sz str = do
+  xs <- S.toList str
+  pure $! unstreamExact sz (S.fromList xs)
+{-# INLINE fromStreamExactM #-}
+
+
+unstreamExact ::
+     forall r ix e. (Mutable r ix e)
+  => Sz ix
+  -> S.Stream Id e
+  -> Array r ix e
+unstreamExact sz str =
+  runST $ do
+    marr <- unsafeNew sz
+    _ <- unstreamMaxM marr str
+    unsafeFreeze Seq marr
+{-# INLINE unstreamExact #-}
+
+
+unstreamMax ::
+     forall r e. (Mutable r Ix1 e)
+  => Int
+  -> S.Stream Id e
+  -> Array r Ix1 e
+unstreamMax kMax str = -- @(S.Stream step s) =
+  runST $ do
+    marr <- unsafeNew (SafeSz kMax)
+    k <- unstreamMaxM marr str
+    -- let stepLoad t i =
+    --       case unId (step t) of
+    --         S.Yield e' t' -> do
+    --           unsafeLinearWrite marr i e'
+    --           stepLoad t' (i + 1)
+    --         S.Skip t' -> stepLoad t' i
+    --         S.Done -> return i
+    --     {-# INLINE stepLoad #-}
+    -- k <- stepLoad s 0
+    unsafeLinearShrink marr (SafeSz k) >>= unsafeFreeze Seq
+{-# INLINE unstreamMax #-}
+
+
+unstreamUnknown :: Mutable r Ix1 a => S.Stream Id a -> Array r Ix1 a
+unstreamUnknown (S.Stream step s) =
+  runST $ do
+    let kInit = 1
+        stepLoad t i kMax marr
+          | i < kMax =
+            case unId (step t) of
+              S.Yield e' t' -> do
+                unsafeLinearWrite marr i e'
+                stepLoad t' (i + 1) kMax marr
+              S.Skip t' -> stepLoad t' i kMax marr
+              S.Done -> unsafeLinearShrink marr (SafeSz i)
+          | otherwise = do
+            let kMax' = kMax * 2
+            marr' <- unsafeLinearGrow marr (SafeSz kMax')
+            stepLoad t i kMax' marr'
+        {-# INLINE stepLoad #-}
+    marr <- unsafeNew (SafeSz kInit)
+    unsafeFreeze Seq =<< stepLoad s 0 kInit marr
+{-# INLINE unstreamUnknown #-}
+
+
+filterSM ::
+     forall r r' ix e m. (Mutable r Ix1 e, Source r' ix e, Monad m)
+  => (e -> m Bool)
+  -> Array r' ix e
+  -> m (Array r Ix1 e)
+filterSM f = fromStreamM . filterStrM f . toStream
+{-# INLINE filterSM #-}
+
+filterS ::
+     forall r r' ix e. (Mutable r Ix1 e, Source r' ix e)
+  => (e -> Bool)
+  -> Array r' ix e
+  -> Array r Ix1 e
+filterS f = fromStream . filterStrM (pure . f) . toStream
+{-# INLINE filterS #-}
+
+filterStrM :: Monad m => (e -> m Bool) -> Stream m e -> Stream m e
+filterStrM f (Stream str k) = Stream (S.filterM f str) (toMax k)
+{-# INLINE filterStrM #-}
+
+mapStrM :: Monad m => (e -> m a) -> Stream m e -> Stream m a
+mapStrM f (Stream str k) = Stream (S.mapM f str) k
+{-# INLINE mapStrM #-}
+
+unstreamMaxM ::
+     (Mutable r ix a, PrimMonad m) => MArray (PrimState m) r ix a -> S.Stream Id a -> m Int
+unstreamMaxM marr (S.Stream step s) = stepLoad s 0
+  where
+    stepLoad t i =
+      case unId (step t) of
+        S.Yield e' t' -> do
+          unsafeLinearWrite marr i e'
+          stepLoad t' (i + 1)
+        S.Skip t' -> stepLoad t' i
+        S.Done -> return i
+    {-# INLINE stepLoad #-}
+{-# INLINE unstreamMaxM #-}
+
+filterStr :: Monad m => (e -> Bool) -> Stream m e -> S.Stream m e
+filterStr f (Stream str _) = S.filter f str
+{-# INLINE filterStr #-}
+
+
+filterComp ::
+     (Mutable r Ix1 e, Source r' Ix1 e, Source r' ix e)
+  => (e -> Bool)
+  -> Array r' ix e
+  -> Array r Ix1 e
+filterComp f arr =
+  unsafePerformIO $ do
+    let !sz = size arr
+        !totalLength = totalElem sz
+    marr <- unsafeNew (Sz totalLength)
+    let !comp = getComp arr
+    chunks <-
+      withScheduler comp $ \scheduler ->
+        splitLinearly (numWorkers scheduler) totalLength $ \chunkLength slackStart -> do
+          let scheduleChunkLoad !chunkSz !start =
+                scheduleWork scheduler $ do
+                  k <-
+                    unstreamMaxM
+                      (unsafeMutableSlice start chunkSz marr)
+                      (filterStr f (toStream (unsafeLinearSlice start chunkSz arr)))
+                  pure (start, start + k)
+              {-# INLINE scheduleChunkLoad #-}
+          loopM_ 0 (< slackStart) (+ chunkLength) (scheduleChunkLoad (SafeSz chunkLength))
+          when (slackStart < totalLength) $
+            scheduleChunkLoad (SafeSz (totalLength - slackStart)) slackStart
+    k <- F.foldlM (moveMisaligned marr marr) 0 chunks
+    unsafeLinearShrink marr (SafeSz k) >>= unsafeFreeze comp
+{-# INLINE filterComp #-}
+
+
+
+-- ifilterComp ::
+--      (Mutable r Ix1 e, Source r' Ix1 e, Source r' ix e)
+--   => (ix -> e -> Bool)
+--   -> Array r' ix e
+--   -> Array r Ix1 e
+-- ifilterComp f arr =
+--   unsafePerformIO $ do
+--     let !sz = size arr
+--         !totalLength = totalElem sz
+--     marr <- unsafeNew (Sz totalLength)
+--     let !comp = getComp arr
+--     chunks <-
+--       withScheduler comp $ \scheduler ->
+--         splitLinearly (numWorkers scheduler) totalLength $ \chunkLength slackStart -> do
+--           let scheduleChunkLoad chunkSz start =
+--                 scheduleWork scheduler $ do
+--                   let arr' = unsafeLinearSlice start chunkSz arr
+--                       marr' = unsafeMutableSlice start chunkSz marr
+--                       g (i, e) = f (fromLinearIndex sz (i + start)) e
+--                       {-# INLINE g #-}
+--                   k <- unstreamMaxM marr' (snd <$> filterStr g (istream arr'))
+--                   pure (start, start + k)
+--               {-# INLINE scheduleChunkLoad #-}
+--           loopM_ 0 (< slackStart) (+ chunkLength) (scheduleChunkLoad (SafeSz chunkLength))
+--           when (slackStart < totalLength) $
+--             scheduleChunkLoad (SafeSz (totalLength - slackStart)) slackStart
+--     k <- F.foldlM (moveMisaligned marr marr) 0 chunks
+--     unsafeLinearShrink marr (SafeSz k) >>= unsafeFreeze comp
+-- {-# INLINE ifilterComp #-}
+
+
 
 --data Streams m e = Streams !(S.Stream m e) ![Ix1, S.Stream m e)]
 
@@ -106,8 +351,8 @@ unsafeGenerateFromTo :: Monad m => Int -> Int -> (Int -> a) -> S.Stream m a
 unsafeGenerateFromTo offset n f = unsafeGenerateFromToM offset n (pure . f)
 {-# INLINE unsafeGenerateFromTo #-}
 
-toStream :: forall r ix e . Source r ix e => Array r ix e -> Array DS Ix1 e
-toStream arr = DSArray comp (Exact k) (Streams (S.Stream chunks 0))
+toStreams :: forall r ix e . Source r ix e => Array r ix e -> Array DS Ix1 e
+toStreams arr = DSArray comp (Exact k) (Streams (S.Stream chunks 0))
   where
     !k = totalElem $ size arr
     !comp = getComp arr
@@ -122,7 +367,7 @@ toStream arr = DSArray comp (Exact k) (Streams (S.Stream chunks 0))
       | i < k = pure $ S.Yield (i, unsafeGenerateFromTo i k (unsafeLinearIndex arr)) (i + r)
       | otherwise = pure S.Done
     {-# INLINE chunks #-}
-{-# INLINE toStream #-}
+{-# INLINE toStreams #-}
 
 linearIndex :: Source r ix e => Array r ix e -> Int -> e
 linearIndex arr i
@@ -186,13 +431,17 @@ unsafeLinearMove src isrc dst idst (Sz k) =
 moveMisaligned ::
      (PrimMonad m, Mutable r ix e)
   => MArray (PrimState m) r ix e
+  -> MArray (PrimState m) r ix e
   -> Ix1
   -> (Ix1, Ix1)
   -> m Ix1
-moveMisaligned marr prevEnd (start, end) = do
-  unless (prevEnd == start) $ unsafeLinearMove marr start marr prevEnd (Sz (end - start))
-  pure (prevEnd + end - start)
+moveMisaligned marrs marrd prevEnd (start, end) = do
+  let !len = end - start
+  unless (prevEnd == start) $
+    unsafeLinearCopy marrs start marrd prevEnd (SafeSz len)
+  pure $! prevEnd + len
 {-# INLINE moveMisaligned #-}
+
 
 loadStreamsUpper ::
      forall r ix e m . (Mutable r ix e, PrimMonad m)
@@ -203,7 +452,7 @@ loadStreamsUpper ::
 loadStreamsUpper withScheduler' marr strs = do
   xs <- withScheduler' $ \ scheduler ->
     loadStreams scheduler (unsafeLinearWrite marr) strs
-  k <- F.foldlM (moveMisaligned marr) 0 xs
+  k <- F.foldlM (moveMisaligned marr marr) 0 xs
   pure $ unsafeMutableSlice 0 (SafeSz k) marr
   -- case ys of
   --   [] -> unsafeMutableResize zeroSz <$> unsafeNew (zeroSz :: Sz ix)
@@ -317,3 +566,6 @@ withTrivialScheduler action = do
 
 --   toStream :: Array (Str m) Ix1 e -> Array (Str m) Ix1 e
 --   toStream = id
+
+
+
