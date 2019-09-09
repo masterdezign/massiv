@@ -79,7 +79,9 @@ readArray :: (Readable f arr, MonadIO m) =>
           -> ReadOptions f -- ^ Any file format related decoding options. Use `def` for default.
           -> FilePath -- ^ Path to the file
           -> m arr
-readArray format opts path = decode format opts <$> liftIO (B.readFile path)
+readArray format opts path = liftIO $ do
+  bs <- B.readFile path
+  fst <$> decodeM format opts bs
 {-# INLINE readArray #-}
 
 
@@ -89,7 +91,8 @@ writeArray :: (Writable f arr, MonadIO m) =>
            -> FilePath
            -> arr
            -> m ()
-writeArray format opts path = liftIO . BL.writeFile path . encode format opts
+writeArray format opts path arr = liftIO $ do
+  BL.writeFile path =<< encodeM format opts arr
 {-# INLINE writeArray #-}
 
 
@@ -174,19 +177,20 @@ displayImageUsing ::
   -> Image r cs e -- ^ Image to display
   -> m ()
 displayImageUsing viewer block img =
-  liftIO $
-  if block
-    then display
-    else img `seq` void (forkIO display)
+  liftIO $ do
+    bs <- encodeM (Auto TIF) () img
+    if block
+      then display bs
+      else img `seq` void (forkIO (display bs))
   where
-    display = do
+    display bs = do
       tmpDir <- fmap (</> "massiv-io") getTemporaryDirectory
       createDirectoryIfMissing True tmpDir
       bracket
         (openBinaryTempFile tmpDir "tmp-img.tiff")
         (hClose . snd)
         (\(imgPath, imgHandle) -> do
-           BL.hPut imgHandle (encode (Auto TIF) () img)
+           BL.hPut imgHandle bs
            hClose imgHandle
            displayImageFile viewer imgPath)
 

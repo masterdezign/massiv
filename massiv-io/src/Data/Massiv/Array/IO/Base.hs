@@ -29,12 +29,15 @@ module Data.Massiv.Array.IO.Base
   , Image
   , defaultReadOptions
   , defaultWriteOptions
+  , encodeAuto
+  -- , encodeAutoEither
+  , encodeError
+  , toAnyCS
   , toProxy
   , fromMaybeEncode
   , fromEitherDecode
   , convertEither
   , MonadThrow(..)
-  , toAnyCS
   ) where
 
 import Control.Exception (Exception, throw)
@@ -43,7 +46,6 @@ import Control.Monad.Catch (MonadThrow(..))
 import qualified Data.ByteString as B (ByteString)
 import qualified Data.ByteString.Lazy as BL (ByteString)
 import Data.Default.Class (Default(..))
-import Data.Maybe (fromMaybe)
 import Data.Massiv.Array as M
 import Data.Typeable
 import Graphics.ColorSpace
@@ -206,7 +208,6 @@ convertEither f showCS conv eImg =
     (conv eImg)
 
 
-
 encodeAuto
   :: forall f r cs e a csY eY csYA eYA csC eC csCA eCA m.
      ( ColorSpace cs e
@@ -220,7 +221,7 @@ encodeAuto
      )
   => f
   -> (forall r' cs' e'. (Source r' Ix2 (Pixel cs' e'), ColorSpace cs' e') =>
-                          Image r' cs' e' -> m (Maybe a))
+                          Image r' cs' e' -> Maybe a)
   -> (Pixel cs e -> Pixel csY eY) -- ^ To preferred from Luma
   -> (Pixel cs e -> Pixel csYA eYA) -- ^ To preferred from Luma with Alpha
   -> (Pixel cs e -> Pixel csC eC) -- ^ To preferred from any color
@@ -255,6 +256,31 @@ encodeAuto f enc toLuma toLumaA toColor toColorA img =
     ]
 
 
+-- encodeAutoEither
+--   :: forall f r cs e a csY eY csYA eYA csC eC csCA eCA m.
+--      ( ColorSpace cs e
+--      , ColorSpace csC eC
+--      , ColorSpace csCA eCA
+--      , ColorSpace csY eY
+--      , ColorSpace csYA eYA
+--      , Source r Ix2 (Pixel cs e)
+--      , FileFormat f
+--      , MonadThrow m
+--      )
+--   => f
+--   -> (forall r' cs' e'. (Source r' Ix2 (Pixel cs' e'), ColorSpace cs' e') =>
+--                           Image r' cs' e' -> Maybe (Either String a))
+--   -> (Pixel cs e -> Pixel csY eY) -- ^ To preferred from Luma
+--   -> (Pixel cs e -> Pixel csYA eYA) -- ^ To preferred from Luma with Alpha
+--   -> (Pixel cs e -> Pixel csC eC) -- ^ To preferred from any color
+--   -> (Pixel cs e -> Pixel csCA eCA) -- ^ To preferred from any color with Alpha
+--   -> Image r cs e
+--   -> m a
+-- encodeAutoEither f encEither toLuma toLumaA toColor toColorA img = do
+--   encodeError =<< encodeAuto f encEither toLuma toLumaA toColor toColorA img
+
+encodeError :: MonadThrow m => Either String a -> m a
+encodeError = either (throwM . EncodeError) pure
 
 toAnyCS
   :: forall r' cs' e' r cs e.
@@ -293,7 +319,7 @@ toAnyCS img =
     , do Refl <- eqT :: Maybe (cs :~: YCbCrA)
          compute <$> elevate (M.map toPixelYCbCrA img)
     , do Refl <- eqT :: Maybe (Pixel cs e :~: Pixel X Bit)
-         return $ compute $ M.map toPixelBinary img
+         pure $ compute $ M.map toPixelBinary img
     ]
 
 
@@ -308,13 +334,13 @@ elevate img =
   msum
     [ fmap (\Refl -> img) (eqT :: Maybe (e :~: e'))
     , do Refl <- eqT :: Maybe (e :~: Word8)
-         return $ M.map toWord8 img
+         pure $ M.map toWord8 img
     , do Refl <- eqT :: Maybe (e :~: Word16)
-         return $ M.map toWord16 img
+         pure $ M.map toWord16 img
     , do Refl <- eqT :: Maybe (e :~: Word32)
-         return $ M.map toWord32 img
+         pure $ M.map toWord32 img
     , do Refl <- eqT :: Maybe (e :~: Word64)
-         return $ M.map toWord64 img
+         pure $ M.map toWord64 img
     , do Refl <- eqT :: Maybe (e :~: Double)
-         return $ M.map toDouble img
+         pure $ M.map toDouble img
     ]

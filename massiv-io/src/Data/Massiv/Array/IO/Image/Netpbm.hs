@@ -27,7 +27,6 @@ module Data.Massiv.Array.IO.Image.Netpbm
   , PPM(..)
   ) where
 
-import Control.Exception
 import Control.Monad (guard)
 import qualified Data.ByteString as B (ByteString)
 import Data.Massiv.Array as M

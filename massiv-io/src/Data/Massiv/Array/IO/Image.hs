@@ -50,7 +50,7 @@ instance FileFormat (Encode (Image r cs e)) where
   exts (EncodeAs f) = exts f
 
 instance Writable (Encode (Image r cs e)) (Image r cs e) where
-  encode (EncodeAs f) _ = encode f (defaultWriteOptions f)
+  encodeM (EncodeAs f) _ = encodeM f (defaultWriteOptions f)
 
 -- | Encode an image into a lazy `BL.ByteString`, while selecting the appropriate format from the
 -- file extension.
@@ -113,7 +113,7 @@ instance FileFormat (Decode (Image r cs e)) where
   exts (DecodeAs f) = exts f
 
 instance Readable (Decode (Image r cs e)) (Image r cs e) where
-  decode (DecodeAs f) _ = decode f (defaultReadOptions f)
+  decodeM (DecodeAs f) _ = decodeM f (defaultReadOptions f)
 
 -- | Decode an image from the strict `ByteString` while inferring format the image is encoded in
 -- from the file extension

@@ -1,8 +1,6 @@
-resolver: lts-12.26
+resolver: lts-14.4
 packages:
 - '.'
-#- '../massiv/'
-#- '../massiv-scheduler/'
 extra-deps: []
 flags: {}
 extra-package-dbs: []

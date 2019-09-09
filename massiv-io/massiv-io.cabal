@@ -45,6 +45,8 @@ library
                      , process
                      , JuicyPixels     >= 3.2.7
                      , netpbm
+                     , unliftio        >= 0.2.12
+                     , unliftio-core
                      , vector          >= 0.10
   default-language:    Haskell2010
   ghc-options:         -Wall

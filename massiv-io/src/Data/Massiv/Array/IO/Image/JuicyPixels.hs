@@ -78,9 +78,7 @@ import qualified Codec.Picture.ColorQuant as JP
 import qualified Codec.Picture.Gif as JP
 import qualified Codec.Picture.Jpg as JP
 import qualified Codec.Picture.Types as TypesJP
-import Control.Exception
 import Control.Monad (guard, msum)
-import Data.Bifunctor
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL (ByteString)
 import Data.Default.Class (Default(..))
@@ -144,20 +142,20 @@ encodeBMP img =
     [ do Refl <- eqT :: Maybe (cs :~: Y)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeBitmap $ toJPImageY8 img
-           , return $ JP.encodeBitmap $ toJPImageY8 $ M.map toWord8 img
+                pure $ JP.encodeBitmap $ toJPImageY8 img
+           , pure $ JP.encodeBitmap $ toJPImageY8 $ M.map toWord8 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGB)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeBitmap $ toJPImageRGB8 img
-           , return $ JP.encodeBitmap $ toJPImageRGB8 $ M.map toWord8 img
+                pure $ JP.encodeBitmap $ toJPImageRGB8 img
+           , pure $ JP.encodeBitmap $ toJPImageRGB8 $ M.map toWord8 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGBA)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeBitmap $ toJPImageRGBA8 img
-           , return $ JP.encodeBitmap $ toJPImageRGBA8 $ M.map toWord8 img
+                pure $ JP.encodeBitmap $ toJPImageRGBA8 img
+           , pure $ JP.encodeBitmap $ toJPImageRGBA8 $ M.map toWord8 img
            ]
     ]
 
@@ -199,34 +197,34 @@ encodePNG img =
     [ do Refl <- eqT :: Maybe (cs :~: Y)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodePng $ toJPImageY8 img
+                pure $ JP.encodePng $ toJPImageY8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodePng $ toJPImageY16 img
-           , return $ JP.encodePng $ toJPImageY16 $ M.map toWord16 img
+                pure $ JP.encodePng $ toJPImageY16 img
+           , pure $ JP.encodePng $ toJPImageY16 $ M.map toWord16 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: YA)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodePng $ toJPImageYA8 img
+                pure $ JP.encodePng $ toJPImageYA8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodePng $ toJPImageYA16 img
-           , return $ JP.encodePng $ toJPImageYA16 $ M.map toWord16 img
+                pure $ JP.encodePng $ toJPImageYA16 img
+           , pure $ JP.encodePng $ toJPImageYA16 $ M.map toWord16 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGB)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodePng $ toJPImageRGB8 img
+                pure $ JP.encodePng $ toJPImageRGB8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodePng $ toJPImageRGB16 img
-           , return $ JP.encodePng $ toJPImageRGB16 $ M.map toWord16 img
+                pure $ JP.encodePng $ toJPImageRGB16 img
+           , pure $ JP.encodePng $ toJPImageRGB16 $ M.map toWord16 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGBA)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodePng $ toJPImageRGBA8 img
+                pure $ JP.encodePng $ toJPImageRGBA8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodePng $ toJPImageRGBA16 img
-           , return $ JP.encodePng $ toJPImageRGBA16 $ M.map toWord16 img
+                pure $ JP.encodePng $ toJPImageRGBA16 img
+           , pure $ JP.encodePng $ toJPImageRGBA16 $ M.map toWord16 img
            ]
     ]
 
@@ -285,11 +283,13 @@ instance FileFormat (Sequence (Auto GIF)) where
 
 instance (ColorSpace cs e, Source r Ix2 (Pixel cs e)) =>
          Writable GIF (Image r cs e) where
-  encodeM f opt img = fromMaybeEncode f (toProxy img) =<< encodeGIF opt img
+  encodeM f opt img =
+    encodeError =<< fromMaybeEncode f (toProxy img) (encodeGIF opt img)
 
 instance (ColorSpace cs e, ToY cs e, ToRGB cs e, Source r Ix2 (Pixel cs e)) =>
          Writable (Auto GIF) (Image r cs e) where
-  encodeM f opt = encodeAuto f (encodeGIF opt) id toPixelY toPixelRGB toPixelRGB
+  encodeM f opt img =
+    encodeError =<< encodeAuto f (encodeGIF opt) id toPixelY toPixelRGB toPixelRGB img
 
 
 instance ColorSpace cs e => Readable GIF (Image S cs e) where
@@ -311,8 +311,8 @@ instance (Mutable r Ix2 (Pixel cs e), ColorSpace cs e) =>
 
 instance (ColorSpace cs e, Source r Ix2 (Pixel cs e)) =>
          Writable (Sequence GIF) (Array B Ix1 (JP.GifDelay, Image r cs e)) where
-  encodeM _ opts =
-    fromMaybeEncode (Sequence GIF) (Proxy :: Proxy (Image r cs e)) . encodeGIFs opts
+  encodeM f opts img = do
+    encodeError =<< fromMaybeEncode f (Proxy :: Proxy (Image r cs e)) (encodeGIFs opts img)
 
 
 instance ColorSpace cs e =>
@@ -361,19 +361,19 @@ decodeGIFsWithDelays f converter bs = do
 {-# INLINE decodeGIFsWithDelays #-}
 
 
-encodeGIF :: forall r cs e . (ColorSpace cs e, Source r Ix2 (Pixel cs e), MonadThrow m)
+encodeGIF :: forall r cs e . (ColorSpace cs e, Source r Ix2 (Pixel cs e))
           => WriteOptionsGIF
           -> Image r cs e
-          -> m (Maybe BL.ByteString)
+          -> Maybe (Either String BL.ByteString)
 encodeGIF (WriteOptionsGIF pal) img =
-  either (throw . EncodeError) id . uncurry JP.encodeGifImageWithPalette <$>
+  uncurry JP.encodeGifImageWithPalette <$>
   msum
     [ do Refl <- eqT :: Maybe (cs :~: Y)
          jImg <-
            msum
              [ do Refl <- eqT :: Maybe (e :~: Word8)
-                  return $ toJPImageY8 img
-             , return $ toJPImageY8 $ M.map toWord8 img
+                  pure $ toJPImageY8 img
+             , pure $ toJPImageY8 $ M.map toWord8 img
              ]
          return (jImg, JP.greyPalette)
     , do Refl <- eqT :: Maybe (cs :~: RGB)
@@ -388,15 +388,15 @@ encodeGIF (WriteOptionsGIF pal) img =
 encodeGIFs :: forall r cs e . (ColorSpace cs e, Source r Ix2 (Pixel cs e))
            => WriteOptionsSequenceGIF
            -> Array B Ix1 (JP.GifDelay, Image r cs e)
-           -> Maybe BL.ByteString
+           -> Maybe (Either String BL.ByteString)
 encodeGIFs (WriteOptionsSequenceGIF pal looping) arr = do
   palImgsLs <-
     msum
       [ do Refl <- eqT :: Maybe (cs :~: Y)
            msum
              [ do Refl <- eqT :: Maybe (e :~: Word8)
-                  return $ P.map ((, JP.greyPalette) . toJPImageY8) imgsLs
-             , return $
+                  pure $ P.map ((, JP.greyPalette) . toJPImageY8) imgsLs
+             , pure $
                P.map ((, JP.greyPalette) . toJPImageY8 . M.map toWord8) imgsLs
              ]
       , do Refl <- eqT :: Maybe (cs :~: RGB)
@@ -407,8 +407,7 @@ encodeGIFs (WriteOptionsSequenceGIF pal looping) arr = do
              ]
       ]
   let palDelImgsLs = P.zipWith (\(i, p) d -> (p, d, i)) palImgsLs delaysLs
-  return $
-    either (throw . EncodeError) id $ JP.encodeGifImages looping palDelImgsLs
+  pure $ JP.encodeGifImages looping palDelImgsLs
   where
     delaysLs = toList delays
     imgsLs = toList imgs
@@ -423,8 +422,8 @@ palettizeRGB :: forall r e . (ColorSpace RGB e, Source r Ix2 (Pixel RGB e))
 palettizeRGB pal img =
   msum
     [ do Refl <- eqT :: Maybe (e :~: Word8)
-         return $ palettize' img
-    , return $ palettize' $ M.map toWord8 img
+         pure $ palettize' img
+    , pure $ palettize' $ M.map toWord8 img
     ]
   where
     palettize' :: forall r' . Source r' Ix2 (Pixel RGB Word8) =>
@@ -475,8 +474,8 @@ encodeHDR img = do
   Refl <- eqT :: Maybe (cs :~: RGB)
   msum
     [ do Refl <- eqT :: Maybe (e :~: Float)
-         return $ JP.encodeHDR $ toJPImageRGBF img
-    , return $ JP.encodeHDR $ toJPImageRGBF $ M.map toFloat img
+         pure $ JP.encodeHDR $ toJPImageRGBF img
+    , pure $ JP.encodeHDR $ toJPImageRGBF $ M.map toFloat img
     ]
 
 
@@ -534,26 +533,26 @@ encodeJPG (WriteOptionsJPG q) img =
     [ do Refl <- eqT :: Maybe (cs :~: Y)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ encJPG $ toJPImageY8 img
-           , return $ encJPG $ toJPImageY8 $ M.map toWord8 img
+                pure $ encJPG $ toJPImageY8 img
+           , pure $ encJPG $ toJPImageY8 $ M.map toWord8 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGB)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ encJPG $ toJPImageRGB8 img
-           , return $ encJPG $ toJPImageRGB8 $ M.map toWord8 img
+                pure $ encJPG $ toJPImageRGB8 img
+           , pure $ encJPG $ toJPImageRGB8 $ M.map toWord8 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: CMYK)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ encJPG $ toJPImageCMYK8 img
-           , return $ encJPG $ toJPImageCMYK8 $ M.map toWord8 img
+                pure $ encJPG $ toJPImageCMYK8 img
+           , pure $ encJPG $ toJPImageCMYK8 $ M.map toWord8 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: YCbCr)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ encJPG $ toJPImageYCbCr8 img
-           , return $ encJPG $ toJPImageYCbCr8 $ M.map toWord8 img
+                pure $ encJPG $ toJPImageYCbCr8 img
+           , pure $ encJPG $ toJPImageYCbCr8 $ M.map toWord8 img
            ]
     ]
   where
@@ -603,20 +602,20 @@ encodeTGA img =
     [ do Refl <- eqT :: Maybe (cs :~: Y)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTga $ toJPImageY8 img
-           , return $ JP.encodeTga $ toJPImageY8 $ M.map toWord8 img
+                pure $ JP.encodeTga $ toJPImageY8 img
+           , pure $ JP.encodeTga $ toJPImageY8 $ M.map toWord8 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGB)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTga $ toJPImageRGB8 img
-           , return $ JP.encodeTga $ toJPImageRGB8 $ M.map toWord8 img
+                pure $ JP.encodeTga $ toJPImageRGB8 img
+           , pure $ JP.encodeTga $ toJPImageRGB8 $ M.map toWord8 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGBA)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTga $ toJPImageRGBA8 img
-           , return $ JP.encodeTga $ toJPImageRGBA8 $ M.map toWord8 img
+                pure $ JP.encodeTga $ toJPImageRGBA8 img
+           , pure $ JP.encodeTga $ toJPImageRGBA8 $ M.map toWord8 img
            ]
     ]
 
@@ -665,56 +664,56 @@ encodeTIF img =
     [ do Refl <- eqT :: Maybe (cs :~: Y)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTiff $ toJPImageY8 img
+                pure $ JP.encodeTiff $ toJPImageY8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodeTiff $ toJPImageY16 img
+                pure $ JP.encodeTiff $ toJPImageY16 img
 #if MIN_VERSION_JuicyPixels(3,3,0)
            , do Refl <- eqT :: Maybe (e :~: Word32)
-                return $ JP.encodeTiff $ toJPImageY32 img
+                pure $ JP.encodeTiff $ toJPImageY32 img
            , do Refl <- eqT :: Maybe (e :~: Float)
-                return $ JP.encodeTiff $ toJPImageYF img
+                pure $ JP.encodeTiff $ toJPImageYF img
 #endif
-           , return $ JP.encodeTiff $ toJPImageY16 $ M.map toWord16 img
+           , pure $ JP.encodeTiff $ toJPImageY16 $ M.map toWord16 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: YA)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTiff $ toJPImageYA8 img
+                pure $ JP.encodeTiff $ toJPImageYA8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodeTiff $ toJPImageYA16 img
-           , return $ JP.encodeTiff $ toJPImageYA16 $ M.map toWord16 img
+                pure $ JP.encodeTiff $ toJPImageYA16 img
+           , pure $ JP.encodeTiff $ toJPImageYA16 $ M.map toWord16 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGB)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTiff $ toJPImageRGB8 img
+                pure $ JP.encodeTiff $ toJPImageRGB8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodeTiff $ toJPImageRGB16 img
-           , return $ JP.encodeTiff $ toJPImageRGB16 $ M.map toWord16 img
+                pure $ JP.encodeTiff $ toJPImageRGB16 img
+           , pure $ JP.encodeTiff $ toJPImageRGB16 $ M.map toWord16 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: RGBA)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTiff $ toJPImageRGBA8 img
+                pure $ JP.encodeTiff $ toJPImageRGBA8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodeTiff $ toJPImageRGBA16 img
-           , return $ JP.encodeTiff $ toJPImageRGBA16 $ M.map toWord16 img
+                pure $ JP.encodeTiff $ toJPImageRGBA16 img
+           , pure $ JP.encodeTiff $ toJPImageRGBA16 $ M.map toWord16 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: YCbCr)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTiff $ toJPImageYCbCr8 img
-           , return $ JP.encodeTiff $ toJPImageYCbCr8 $ M.map toWord8 img
+                pure $ JP.encodeTiff $ toJPImageYCbCr8 img
+           , pure $ JP.encodeTiff $ toJPImageYCbCr8 $ M.map toWord8 img
            ]
     , do Refl <- eqT :: Maybe (cs :~: CMYK)
          msum
            [ do Refl <- eqT :: Maybe (e :~: Word8)
-                return $ JP.encodeTiff $ toJPImageCMYK8 img
+                pure $ JP.encodeTiff $ toJPImageCMYK8 img
            , do Refl <- eqT :: Maybe (e :~: Word16)
-                return $ JP.encodeTiff $ toJPImageCMYK16 img
+                pure $ JP.encodeTiff $ toJPImageCMYK16 img
              -- for CMYK default is 8bit, instead of 16bit, since many viewers and editors
              -- don't support it.
-           , return $ JP.encodeTiff $ toJPImageCMYK8 $ M.map toWord8 img
+           , pure $ JP.encodeTiff $ toJPImageCMYK8 $ M.map toWord8 img
            ]
     ]
 
