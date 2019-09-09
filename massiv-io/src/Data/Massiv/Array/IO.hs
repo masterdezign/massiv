@@ -311,10 +311,14 @@ conversion:
 
 * 'TIF':
 
-    * __read__: ('Y' 'Word8'), ('Y' 'Word16'), ('YA' 'Word8'), ('YA' 'Word16'),
+    * __read__:
+    ('Y' 'Word8'), ('Y' 'Word16'), ('Y' 'Word32'), ('Y' 'Float'),
+    ('YA' 'Word8'), ('YA' 'Word16'),
     ('RGB' 'Word8'), ('RGB' 'Word16'), ('RGBA' 'Word8'), ('RGBA' 'Word16'),
     ('CMYK' 'Word8'), ('CMYK' 'Word16')
-    * __write__: ('Y' 'Word8'), ('Y' 'Word16'), ('YA' 'Word8'), ('YA' 'Word16'),
+    * __write__:
+    ('Y' 'Word8'), ('Y' 'Word16'), ('Y' 'Word32'), ('Y' 'Float'),
+    ('YA' 'Word8'), ('YA' 'Word16'),
     ('RGB' 'Word8'), ('RGB' 'Word16'), ('RGBA' 'Word8'), ('RGBA' 'Word16')
     ('CMYK' 'Word8'), ('CMYK' 'Word16'), ('YCbCr' 'Word8')
 
