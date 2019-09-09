@@ -1,3 +1,10 @@
+# 0.2.0
+
+* Switch to `MonadIO`
+* Write files with durability and atomicity guarantees
+* Switch to `encodeM` and `decodeM`, as well as corresponding `encodeImagM` and `decodeImageM`
+* Addition of `ConvertError`, `DecodeError` and `EncodeError`.
+
 # 0.1.7
 
 * Fix compatibility with `JuicyPixels >= 3.3.0`

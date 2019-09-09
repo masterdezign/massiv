@@ -30,7 +30,6 @@ module Data.Massiv.Array.IO.Base
   , defaultReadOptions
   , defaultWriteOptions
   , encodeAuto
-  -- , encodeAutoEither
   , encodeError
   , toAnyCS
   , toProxy
@@ -120,28 +119,33 @@ instance FileFormat f => FileFormat (Auto f) where
   exts (Auto f) = exts f
 
 
--- | File formats that can be read into an Array.
+-- | File formats that can be read into arrays.
 class Readable f arr where
 
-  -- | Decode a `B.ByteString` into an Array.
+  -- | Decode a `B.ByteString` into an array. Can also return whatever left over data that
+  -- was not consumed during decoding.
+  --
+  -- @since 0.2.0
   decodeM :: MonadThrow m => f -> ReadOptions f -> B.ByteString -> m (arr, Maybe B.ByteString)
+
+
+-- | Encode an array into a `BL.ByteString`.
+encode :: Writable f arr => f -> WriteOptions f -> arr -> BL.ByteString
+encode f opts = either throw id . encodeM f opts
+{-# DEPRECATED encode "In favor of a better `encodeM`" #-}
 
 -- | Decode a `B.ByteString` into an Array.
 decode :: Readable f arr => f -> ReadOptions f -> B.ByteString -> arr
 decode f opts = either throw fst . decodeM f opts
-
+{-# DEPRECATED decode "In favor of a better `decodeM`" #-}
 
 -- | Arrays that can be written into a file.
 class Writable f arr where
 
   -- | Encode an array into a `BL.ByteString`.
+  --
+  -- @since 0.2.0
   encodeM :: MonadThrow m => f -> WriteOptions f -> arr -> m BL.ByteString
-
--- | Encode an array into a `BL.ByteString`.
-encode :: Writable f arr => f -> WriteOptions f -> arr -> BL.ByteString
-encode f opts = either throw id . encodeM f opts
-
-
 
 -- | Helper function to create a `Proxy` from the value.
 toProxy :: a -> Proxy a

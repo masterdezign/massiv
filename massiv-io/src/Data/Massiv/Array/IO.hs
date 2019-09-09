@@ -40,6 +40,7 @@ module Data.Massiv.Array.IO
   , module Data.Massiv.Array.IO.Image
   ) where
 
+import Prelude
 import Control.Concurrent (forkIO)
 import Control.Exception (bracket)
 import Control.Monad (void)
@@ -54,9 +55,9 @@ import Graphics.ColorSpace
 import Prelude as P hiding (readFile, writeFile)
 import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 import System.FilePath
-import System.IO (hClose, openBinaryTempFile)
+import System.IO (hClose, openBinaryTempFile, IOMode(..))
 import System.Process (readProcess)
-
+import UnliftIO.IO.File
 
 
 
@@ -84,15 +85,20 @@ readArray format opts path = liftIO $ do
   fst <$> decodeM format opts bs
 {-# INLINE readArray #-}
 
+writeLazyAtomically :: FilePath -> BL.ByteString -> IO ()
+writeLazyAtomically filepath bss =
+  withBinaryFileDurableAtomic filepath WriteMode $ \h -> Prelude.mapM_ (B.hPut h) (BL.toChunks bss)
 
+-- | Write an array to disk atomically (on non-Windows OSs)
 writeArray :: (Writable f arr, MonadIO m) =>
               f -- ^ Format to use while encoding the array
            -> WriteOptions f -- ^ Any file format related encoding options. Use `def` for default.
            -> FilePath
            -> arr
            -> m ()
-writeArray format opts path arr = liftIO $ do
-  BL.writeFile path =<< encodeM format opts arr
+writeArray format opts filepath arr =
+  liftIO $ do
+    writeLazyAtomically filepath =<< encodeM format opts arr
 {-# INLINE writeArray #-}
 
 
@@ -121,10 +127,13 @@ writeArray format opts path arr = liftIO $ do
 -- >>> frogCMYK <- readImageAuto "files/frog.jpg" :: IO (Image S CMYK Double)
 -- >>> displayImage frogCMYK
 --
-readImage :: (Source S Ix2 (Pixel cs e), ColorSpace cs e) =>
+readImage :: (Source S Ix2 (Pixel cs e), ColorSpace cs e, MonadIO m) =>
               FilePath -- ^ File path for an image
-           -> IO (Image S cs e)
-readImage path = decodeImage imageReadFormats path <$> B.readFile path
+           -> m (Image S cs e)
+readImage path =
+  liftIO $ do
+    bs <- B.readFile path
+    fst <$> decodeImageM imageReadFormats path bs
 {-# INLINE readImage #-}
 
 
@@ -134,7 +143,9 @@ readImage path = decodeImage imageReadFormats path <$> B.readFile path
 readImageAuto :: (Mutable r Ix2 (Pixel cs e), ColorSpace cs e, MonadIO m) =>
                   FilePath -- ^ File path for an image
                -> m (Image r cs e)
-readImageAuto path = decodeImage imageReadAutoFormats path <$> liftIO (B.readFile path)
+readImageAuto path = liftIO $ do
+  bs <- B.readFile path
+  fst <$> decodeImageM imageReadAutoFormats path bs
 {-# INLINE readImageAuto #-}
 
 
@@ -150,7 +161,8 @@ readImageAuto path = decodeImage imageReadAutoFormats path <$> liftIO (B.readFil
 --
 writeImage :: (Source r Ix2 (Pixel cs e), ColorSpace cs e, MonadIO m) =>
                FilePath -> Image r cs e -> m ()
-writeImage path = liftIO . BL.writeFile path . encodeImage imageWriteFormats path
+writeImage path img = liftIO $ do
+  writeLazyAtomically path =<< encodeImageM imageWriteFormats path img
 
 
 -- | Write an image to file while performing all necessary precisiona and color space conversions.
@@ -164,7 +176,8 @@ writeImageAuto
      , MonadIO m
      )
   => FilePath -> Image r cs e -> m ()
-writeImageAuto path = liftIO . BL.writeFile path . encodeImage imageWriteAutoFormats path
+writeImageAuto path img = liftIO $ do
+  writeLazyAtomically path =<< encodeImageM imageWriteAutoFormats path img
 
 
 
@@ -181,7 +194,7 @@ displayImageUsing viewer block img =
     bs <- encodeM (Auto TIF) () img
     if block
       then display bs
-      else img `seq` void (forkIO (display bs))
+      else void (forkIO (display bs))
   where
     display bs = do
       tmpDir <- fmap (</> "massiv-io") getTemporaryDirectory
